@@ -198,12 +198,14 @@ def parse_output(raw: str) -> tuple[str, list[str], bool]:
 
 ```python
 class Logger:
-    def __init__(self, output_dir: str):
-        """Initialize logging to output_dir"""
-        pass
+    def __init__(self, output_dir: Path):
+        """Initialize logger - creates experiment.jsonl in output_dir"""
 
-    def log_round_start(self, round_num: int, pool_size: int) -> None:
-        pass
+    def log_experiment_start(self, config: dict, init_signature: str, num_seeds: int) -> None:
+        """Log experiment initialization"""
+
+    def log_round_start(self, round_num: int, pool_size: int, active_pool_size: int) -> None:
+        """Log round start with pool state"""
 
     def log_mind_invocation(
         self,
@@ -213,21 +215,29 @@ class Logger:
         thinking: str,
         transmitted: list[str],
         completed: bool,
-        tokens_used: int
+        signature: str,
+        tokens_used: int,
+        raw_output: str
     ) -> None:
-        pass
+        """Log Mind invocation and output"""
 
-    def log_round_end(self, round_num: int, messages_added: int) -> None:
-        pass
+    def log_round_end(self, round_num: int, messages_added: int, pool_delta: list[str]) -> None:
+        """Log round end with pool delta (new messages added)"""
 
-    def save_pool_snapshot(self, round_num: int, pool: Pool) -> None:
-        """Save pool state at end of round"""
-        pass
+    def log_experiment_end(self, total_rounds: int, final_pool_size: int, total_tokens: int) -> None:
+        """Log experiment completion"""
 ```
 
-**Format:** JSONL (one JSON object per line) for easy streaming analysis.
+**Format:** Single JSONL file (`experiment.jsonl`) with typed events:
+- `experiment_start` - config, init signature, seed count
+- `round_start` - round number, pool sizes
+- `mind_invocation` - full Mind I/O and metadata
+- `round_end` - pool delta (messages added this round)
+- `experiment_end` - summary statistics
 
-**Verification:** Logs are written, readable, contain all necessary data.
+**Design:** Streaming writes with flush, pool deltas (not snapshots), ISO timestamps, context manager support.
+
+**Verification:** Logs written correctly, typed events parseable, complete data for reconstruction.
 
 ---
 
