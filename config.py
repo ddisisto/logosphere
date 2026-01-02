@@ -4,6 +4,7 @@ Configuration parameters for Logosphere experiment.
 
 import os
 from pathlib import Path
+from datetime import datetime
 
 
 # Load environment variables
@@ -16,6 +17,12 @@ def load_api_key() -> str:
                 if line.startswith('OPENROUTER_API'):
                     return line.split(':', 1)[1].strip()
     raise ValueError("API key not found in .env")
+
+
+# Directory structure
+PROJECT_ROOT = Path(__file__).parent
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
+INIT_TEMPLATE = PROJECT_ROOT / "init-template.txt"
 
 
 # Population parameters
@@ -44,9 +51,26 @@ Format: Messages separated by --- on its own line.
 To finish, write a blank message (two --- with nothing between)."""
 
 
-# Seed messages - bootstrap the pool
-SEED_MESSAGES = [
-    "What patterns persist?",
-    "Attention is the resource.",
-    "Simple rules, complex outcomes."
-]
+# Init signature - used for validation (exact match only)
+# Mind outputs with this exact signature are invalid and discarded
+INIT_SIGNATURE = "~init"
+
+
+def create_experiment_dir(name: str = None) -> Path:
+    """
+    Create experiment directory with timestamp.
+
+    Args:
+        name: Optional experiment name (default: timestamp)
+
+    Returns:
+        Path to experiment directory
+    """
+    if name is None:
+        name = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+
+    exp_dir = EXPERIMENTS_DIR / name
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    (exp_dir / "logs").mkdir(exist_ok=True)
+
+    return exp_dir

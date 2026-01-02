@@ -1,7 +1,8 @@
 """Quick verification test for pool.py"""
 
 from pool import Pool
-from config import SEED_MESSAGES, M_ACTIVE_POOL, K_SAMPLES
+from config import M_ACTIVE_POOL, K_SAMPLES, INIT_TEMPLATE
+from init_parser import load_init_file
 
 
 def test_pool():
@@ -11,14 +12,17 @@ def test_pool():
     pool = Pool(max_active=M_ACTIVE_POOL)
     print(f"✓ Pool created (max_active={M_ACTIVE_POOL})")
 
-    # Add seed messages
-    for msg in SEED_MESSAGES:
+    # Add seed messages from init template
+    seed_messages, _ = load_init_file(INIT_TEMPLATE)
+    for msg in seed_messages:
         pool.add_message(msg)
-    print(f"✓ Added {len(SEED_MESSAGES)} seed messages")
+    print(f"✓ Added {len(seed_messages)} seed messages from init template")
 
     # Check sizes
-    assert pool.size() == len(SEED_MESSAGES)
-    assert pool.active_size() == len(SEED_MESSAGES)
+    assert pool.size() == len(seed_messages)
+    # Active size is min(total, max_active)
+    expected_active = min(len(seed_messages), M_ACTIVE_POOL)
+    assert pool.active_size() == expected_active
     print(f"✓ Pool size: {pool.size()}, Active size: {pool.active_size()}")
 
     # Sample

@@ -31,9 +31,43 @@ logosphere/
 
 ---
 
+## Experiment Directory Structure
+
+Each experiment run is self-contained:
+
+```
+logosphere/
+├── pool.py, mind.py, etc.        # Core implementation
+├── init-template.txt             # Template for seeding
+└── experiments/
+    ├── 2026-01-02-first-run/
+    │   ├── init.md               # Seed messages (parsed like Mind output)
+    │   ├── config.json           # Parameter snapshot
+    │   └── logs/                 # JSONL experiment logs
+    └── 2026-01-02-second-run/
+        └── ...
+```
+
+### init.md Format
+
+Seeds the pool by reusing Mind parsing:
+- Pre-delimiter content: notes, metadata (not transmitted)
+- Messages: standard `---` separated blocks
+- Termination: blank message required
+- Signature: `~init` (appended to all seed messages)
+
+**Validation:** Mind outputs with signature exactly matching `~init` are invalid and discarded (prevents impersonation).
+
+**Workflow:**
+1. Copy `init-template.txt` to `experiments/run-name/init.md`
+2. Customize seed messages
+3. Run experiment (init.md parsed to seed pool)
+
+---
+
 ## Sub-Task 1: Core Data Structures
 
-**Deliverable:** `pool.py` and `config.py`
+**Deliverable:** `pool.py`, `config.py`, `init_parser.py`
 
 ### pool.py
 
@@ -69,30 +103,49 @@ class Pool:
 ### config.py
 
 ```python
+# Directory structure
+PROJECT_ROOT = Path(__file__).parent
+EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
+INIT_TEMPLATE = PROJECT_ROOT / "init-template.txt"
+
 # Population parameters
-N_MINDS = [TBD]
-K_SAMPLES = [TBD]
-M_ACTIVE_POOL = [TBD]
-MAX_ROUNDS = [TBD]
-TOKEN_LIMIT = [TBD]
+N_MINDS = 3
+K_SAMPLES = 3
+M_ACTIVE_POOL = 15
+MAX_ROUNDS = 10
+TOKEN_LIMIT = 2000
 
 # API configuration
-API_KEY = "from .env"
-MODEL = "anthropic/claude-3.5-sonnet"  # or via OpenRouter
+API_KEY = load_api_key()  # from .env
+MODEL = "anthropic/claude-3.5-sonnet"
+API_BASE_URL = "https://openrouter.ai/api/v1"
 
 # System prompt
-SYSTEM_PROMPT = """[TBD - minimal functional framing]"""
+SYSTEM_PROMPT = """You receive messages from others. Read them.
+You may write messages to share with others.
 
-# Seed messages
-SEED_MESSAGES = [
-    "[TBD]"
-]
+Format: Messages separated by --- on its own line.
+To finish, write a blank message (two --- with nothing between)."""
 
-# Message delimiter
-DELIMITER = "---"
+# Init signature for validation
+INIT_SIGNATURE = "~init"
+
+# Utilities
+def create_experiment_dir(name: str = None) -> Path:
+    """Create timestamped experiment directory"""
 ```
 
-**Verification:** Can create pool, add messages, sample correctly. Active pool is tail M.
+### init_parser.py
+
+```python
+def load_init_file(init_path: Path) -> tuple[list[str], str]:
+    """Parse init.md to extract seed messages and signature"""
+
+def validate_mind_signature(signature: str) -> bool:
+    """Validate Mind signature != INIT_SIGNATURE (exact match)"""
+```
+
+**Verification:** Can create pool, add messages, sample correctly. Active pool is tail M. Can parse init.md.
 
 ---
 
