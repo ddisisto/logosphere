@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
+import yaml
+
 import config
 from pool import Pool
 from logger import Logger
@@ -55,6 +57,34 @@ def save_config_snapshot(exp_dir: Path) -> None:
         json.dump(config_data, f, indent=2)
 
     print(f"✓ Config snapshot: {config_path}")
+
+
+def save_novel_memes(exp_dir: Path, novel_memes: list[dict]) -> None:
+    """
+    Save novel memes (non-init messages) to YAML file.
+
+    Args:
+        exp_dir: Experiment directory
+        novel_memes: List of dicts with keys: round, mind_id, signature, content
+    """
+    novel_path = exp_dir / "novel_memes.yaml"
+
+    with open(novel_path, 'w') as f:
+        for i, meme in enumerate(novel_memes):
+            if i > 0:
+                f.write("---\n")
+
+            # Write metadata
+            f.write(f"round: {meme['round']}\n")
+            f.write(f"mind_id: {meme['mind_id']}\n")
+            f.write(f"signature: {repr(meme['signature'])}\n")
+
+            # Write content as literal block scalar
+            f.write("content: |-\n")
+            for line in meme['content'].splitlines():
+                f.write(f"  {line}\n")
+
+    print(f"✓ Novel memes: {novel_path} ({len(novel_memes)} messages)")
 
 
 def run_experiment(name: str = None, rounds: int = None) -> None:
@@ -134,6 +164,9 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
         # Create orchestrator
         orchestrator = Orchestrator(pool, logger)
 
+        # Track novel memes (messages added during experiment)
+        novel_memes = []
+
         # Run experiment
         print(f"Running {max_rounds} rounds with {config.N_MINDS} Minds...")
         print()
@@ -141,7 +174,21 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
         try:
             for round_num in range(1, max_rounds + 1):
                 print(f"Round {round_num}/{max_rounds}...", end=" ", flush=True)
+
+                # Track pool size before round
+                pool_size_before = pool.size()
+
+                # Run round
                 messages_added = orchestrator.run_round(round_num)
+
+                # Extract novel memes added this round
+                # Get the messages that were just added (pool delta)
+                new_messages = pool.get_all()[pool_size_before:]
+
+                # We need to get metadata from the log for these messages
+                # For now, we'll track them from orchestrator's last round
+                # The orchestrator logs the full context, so we can reconstruct
+
                 print(f"✓ ({messages_added} messages, {pool.size()} total)")
 
             print()
@@ -152,6 +199,27 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
             print(f"Rounds completed: {max_rounds}")
             print(f"Final pool size: {pool.size()}")
             print(f"Total tokens: {orchestrator.total_tokens:,}")
+            print()
+
+            # Extract novel memes from logs
+            # Read experiment.jsonl and extract all mind_invocation events
+            novel_memes = []
+            log_path = log_dir / "experiment.jsonl"
+            with open(log_path) as f:
+                for line in f:
+                    event = json.loads(line)
+                    if event['type'] == 'mind_invocation':
+                        # Add each transmitted message with metadata
+                        for msg in event['transmitted']:
+                            novel_memes.append({
+                                'round': event['round'],
+                                'mind_id': event['mind_id'],
+                                'signature': event['signature'],
+                                'content': msg
+                            })
+
+            # Save novel memes to YAML
+            save_novel_memes(exp_dir, novel_memes)
             print()
 
             # Log experiment end
