@@ -140,10 +140,9 @@ def create_experiment_dir(name: str = None) -> Path:
 ```python
 def load_init_file(init_path: Path) -> tuple[list[str], str]:
     """Parse init.md to extract seed messages and signature"""
-
-def validate_mind_signature(signature: str) -> bool:
-    """Validate Mind signature != INIT_SIGNATURE (exact match)"""
 ```
+
+**Note:** No signature validation/filtering. All Mind outputs go to pool regardless of signature. Let the memes meme.
 
 **Verification:** Can create pool, add messages, sample correctly. Active pool is tail M. Can parse init.md.
 

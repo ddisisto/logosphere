@@ -4,7 +4,6 @@ Pre-experiment thoughts and notes can go here before first delim
 metadata for tracking, etc: if needed
 All messages that follow are used to pre-seed the pool
 Per usual, signature appended to all messages
-Additional requirement / validation: Outputs claiming same exact signature used by init.md are invalid and discarded. Any variations (including any substring match) are allowed.
 ---
 Understand your environment
 ---

@@ -6,7 +6,7 @@ Reuses Mind parsing logic to extract messages from init file.
 
 from pathlib import Path
 from mind import parse_output
-from config import DELIMITER, INIT_SIGNATURE
+from config import INIT_SIGNATURE
 
 
 def load_init_file(init_path: Path) -> tuple[list[str], str]:
@@ -49,17 +49,3 @@ def load_init_file(init_path: Path) -> tuple[list[str], str]:
         )
 
     return messages, signature
-
-
-def validate_mind_signature(signature: str) -> bool:
-    """
-    Validate that Mind signature is not impersonating init.
-
-    Args:
-        signature: Signature from Mind output
-
-    Returns:
-        True if valid (different from init signature)
-        False if invalid (exact match with init signature)
-    """
-    return signature != INIT_SIGNATURE

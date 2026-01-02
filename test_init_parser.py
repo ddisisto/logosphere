@@ -3,7 +3,7 @@ Test init_parser.py functionality
 """
 
 from pathlib import Path
-from init_parser import load_init_file, validate_mind_signature
+from init_parser import load_init_file
 from config import INIT_TEMPLATE, INIT_SIGNATURE
 
 
@@ -33,25 +33,6 @@ def test_load_init_template():
     print(f"\n  ✓ All {len(messages)} messages have signature appended")
 
 
-def test_validate_mind_signature():
-    """Test Mind signature validation"""
-    print("\nTesting validate_mind_signature...")
-
-    # Valid signatures (different from init)
-    assert validate_mind_signature("") == True
-    print("  ✓ Empty signature is valid")
-
-    assert validate_mind_signature("~observer") == True
-    print("  ✓ Similar but different signature is valid")
-
-    assert validate_mind_signature("init") == True
-    print("  ✓ Substring without ~ is valid")
-
-    # Invalid signature (exact match)
-    assert validate_mind_signature(INIT_SIGNATURE) == False
-    print(f"  ✓ Exact match '{INIT_SIGNATURE}' is invalid (correct)")
-
-
 def run_all_tests():
     """Run all init_parser tests"""
     print("=" * 60)
@@ -60,7 +41,6 @@ def run_all_tests():
     print()
 
     test_load_init_template()
-    test_validate_mind_signature()
 
     print()
     print("=" * 60)
@@ -70,7 +50,6 @@ def run_all_tests():
     print("Component validated:")
     print("  - init-template.txt parsed correctly")
     print("  - Seed messages extracted with signature")
-    print("  - Mind signature validation working")
 
 
 if __name__ == "__main__":
