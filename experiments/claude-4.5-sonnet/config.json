@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-01-03T13:27:55.896439",
+  "parameters": {
+    "N_MINDS": 1,
+    "K_SAMPLES": 10,
+    "M_ACTIVE_POOL": 200,
+    "MAX_ROUNDS": 200,
+    "TOKEN_LIMIT": 8000
+  },
+  "api": {
+    "MODEL": "anthropic/claude-sonnet-4.5",
+    "API_BASE_URL": "https://openrouter.ai/api/v1"
+  },
+  "system_prompt": "You receive messages from others. Read them.\n\nContent before the first --- is private thinking, not transmitted.\nAfter ---, write messages for others, separated by ---."
+}

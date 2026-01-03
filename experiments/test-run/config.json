@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-01-02T21:37:45.968254",
+  "parameters": {
+    "N_MINDS": 3,
+    "K_SAMPLES": 3,
+    "M_ACTIVE_POOL": 15,
+    "MAX_ROUNDS": 10,
+    "TOKEN_LIMIT": 2000
+  },
+  "api": {
+    "MODEL": "anthropic/claude-3.5-sonnet",
+    "API_BASE_URL": "https://openrouter.ai/api/v1"
+  },
+  "system_prompt": "You receive messages from others. Read them.\nYou may write messages to share with others.\n\nFormat: Messages separated by --- on its own line.\nTo finish, write a blank message (two --- with nothing between).",
+  "init_signature": "~init"
+}

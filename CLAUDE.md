@@ -306,6 +306,74 @@ if __name__ == "__main__":
 
 ---
 
+## Sub-Task 6: Analysis Stage
+
+**Deliverable:** `analyze.py`
+
+**Purpose:** Extract insights from experiment logs post-hoc or as final step of experiment run.
+
+### Entry Point
+
+```bash
+# Auto-run after experiment (default)
+python run.py --name my-experiment
+
+# Skip analysis for fast iteration
+python run.py --name my-experiment --no-analyze
+
+# Re-run or extend analysis later
+python analyze.py my-experiment [--tool <name>]
+```
+
+### Analysis Tool Pattern
+
+```python
+def analyze_<toolname>(exp_dir: Path) -> None:
+    """Tool description (shown in --list-tools)."""
+    # Read experiment.jsonl
+    # Extract/compute insights
+    # Write outputs to exp_dir
+    # Print summary
+
+# Register in TOOLS dict
+TOOLS['toolname'] = analyze_<toolname>
+```
+
+### Default Tool: novel-memes
+
+Extracts all transmitted messages to `novel_memes.yaml`:
+
+```yaml
+---
+round: N
+mind_id: M
+content: |-
+  Message text
+```
+
+**Data source:** All `mind_invocation` events in `experiment.jsonl`
+
+### Adding New Tools
+
+1. Define function in `analyze.py`
+2. Add to `TOOLS` registry
+3. Done - no other changes needed
+
+**Future examples:**
+- `dynamics` - Pool growth over time (CSV/plot)
+- `diversity` - Message similarity metrics
+- `attention` - Track which messages get sampled
+
+### Verification
+
+1. Can run experiment with auto-analysis
+2. Can skip analysis with `--no-analyze`
+3. Can re-run analysis independently
+4. Easy to add new analysis tools
+5. Interrupted experiments can still be analyzed
+
+---
+
 ## Parameter Selection (Initial Values)
 
 **To be determined in Sub-Task 1:**

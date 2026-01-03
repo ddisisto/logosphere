@@ -59,45 +59,84 @@ def load_experiment_config(exp_dir: Path) -> dict:
         return json.load(f)
 
 
-def save_novel_memes(exp_dir: Path, novel_memes: list[dict]) -> None:
+def create_from_template(name: str, template_name: str) -> None:
     """
-    Save novel memes (non-init messages) to YAML file.
+    Create new experiment from template experiment.
+
+    Copies config.json and init.md from template to new experiment directory.
 
     Args:
-        exp_dir: Experiment directory
-        novel_memes: List of dicts with keys: round, mind_id, content
+        name: New experiment name
+        template_name: Existing experiment to use as template
+
+    # TODO: Track genealogy - record template source in config metadata
+    # This will allow tracking experiment lineage and parameter evolution
     """
-    novel_path = exp_dir / "novel_memes.yaml"
+    template_dir = config.EXPERIMENTS_DIR / template_name
+    new_dir = config.EXPERIMENTS_DIR / name
 
-    with open(novel_path, 'w') as f:
-        for i, meme in enumerate(novel_memes):
-            if i > 0:
-                f.write("---\n")
+    # Validate template exists
+    if not template_dir.exists():
+        print(f"❌ Error: Template experiment not found")
+        print(f"Expected: {template_dir}")
+        print()
+        sys.exit(1)
 
-            # Write metadata
-            f.write(f"round: {meme['round']}\n")
-            f.write(f"mind_id: {meme['mind_id']}\n")
+    # Check if target already exists
+    if new_dir.exists():
+        print(f"❌ Error: Experiment directory already exists")
+        print(f"Location: {new_dir}")
+        print()
+        print("Choose a different name or remove the existing directory")
+        print()
+        sys.exit(1)
 
-            # Write content as literal block scalar
-            f.write("content: |-\n")
-            for line in meme['content'].splitlines():
-                f.write(f"  {line}\n")
+    # Create new directory
+    new_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Created: {new_dir}")
 
-    print(f"✓ Novel memes: {novel_path} ({len(novel_memes)} messages)")
+    # Copy config.json
+    template_config = template_dir / "config.json"
+    new_config = new_dir / "config.json"
+    if template_config.exists():
+        import shutil
+        shutil.copy2(template_config, new_config)
+        print(f"Copied: config.json from {template_name}")
+    else:
+        print(f"⚠ Warning: Template has no config.json")
+
+    # Copy init.md
+    template_init = template_dir / "init.md"
+    new_init = new_dir / "init.md"
+    if template_init.exists():
+        import shutil
+        shutil.copy2(template_init, new_init)
+        print(f"Copied: init.md from {template_name}")
+    else:
+        print(f"⚠ Warning: Template has no init.md")
+
+    print()
+    print(f"✓ Experiment '{name}' created from template '{template_name}'")
+    print()
+    print("Next steps:")
+    print(f"  1. Edit {new_dir}/config.json and {new_dir}/init.md as needed")
+    print(f"  2. Run: python run.py {name}")
+    print()
 
 
-def run_experiment(name: str) -> None:
+def run_experiment(name: str, analyze: bool = True) -> None:
     """
     Run Logosphere experiment.
 
     Args:
         name: Experiment name (REQUIRED - must be an existing directory)
+        analyze: Run analysis after experiment (default: True)
 
     Workflow:
         1. Create experiments/<name>/ directory
         2. Copy config-template.json to experiments/<name>/config.json and edit
         3. Copy init-template.txt to experiments/<name>/init.md and edit
-        4. Run: python run.py --name <name>
+        4. Run: python run.py <name>
     """
     print_header()
 
@@ -113,7 +152,7 @@ def run_experiment(name: str) -> None:
         print(f"  cp config-template.json {exp_dir}/config.json")
         print(f"  cp init-template.txt {exp_dir}/init.md")
         print(f"  # Edit config.json and init.md")
-        print(f"  python run.py --name {name}")
+        print(f"  python run.py {name}")
         print()
         sys.exit(1)
 
@@ -225,26 +264,6 @@ def run_experiment(name: str) -> None:
             print(f"Total tokens: {orchestrator.total_tokens:,}")
             print()
 
-            # Extract novel memes from logs
-            # Read experiment.jsonl and extract all mind_invocation events
-            novel_memes = []
-            log_path = log_dir / "experiment.jsonl"
-            with open(log_path) as f:
-                for line in f:
-                    event = json.loads(line)
-                    if event['type'] == 'mind_invocation':
-                        # Add each transmitted message with metadata
-                        for msg in event['transmitted']:
-                            novel_memes.append({
-                                'round': event['round'],
-                                'mind_id': event['mind_id'],
-                                'content': msg
-                            })
-
-            # Save novel memes to YAML
-            save_novel_memes(exp_dir, novel_memes)
-            print()
-
             # Log experiment end
             logger.log_experiment_end(
                 total_rounds=MAX_ROUNDS,
@@ -255,13 +274,37 @@ def run_experiment(name: str) -> None:
             print(f"Logs: {log_dir / 'experiment.jsonl'}")
             print()
 
+            # Run analysis if requested
+            if analyze:
+                print("Running analysis...")
+                print()
+
+                # Import and run novel_memes analysis
+                import analyze as analyzer
+                try:
+                    analyzer.analyze_novel_memes(exp_dir)
+                except Exception as e:
+                    print(f"Warning: Analysis failed: {e}")
+                    print(f"You can re-run analysis with: python analyze.py {name}")
+                    print()
+            else:
+                print("Skipped analysis (use --analyze to enable)")
+                print(f"Run analysis later with: python analyze.py {name}")
+                print()
+
         except KeyboardInterrupt:
+            print("\n\n" + "=" * 60)
+            print("EXPERIMENT INTERRUPTED")
+            print("=" * 60)
             print()
-            print()
-            print("Experiment interrupted by user")
-            print(f"Completed rounds: {round_num - 1}/{MAX_ROUNDS}")
-            print(f"Pool size: {pool.size()}")
+            print(f"Completed {round_num - 1}/{MAX_ROUNDS} rounds")
+            print(f"Current pool size: {pool.size()}")
             print(f"Tokens used: {orchestrator.total_tokens:,}")
+            print()
+            print(f"Logs: {log_dir / 'experiment.jsonl'}")
+            print()
+            print("To analyze partial results:")
+            print(f"  python analyze.py {name}")
             print()
             sys.exit(1)
 
@@ -273,35 +316,53 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Workflow:
-  1. Create experiment directory:
-       mkdir experiments/my-experiment
+  # Option 1: Create from template (recommended)
+  python run.py new-experiment --template existing-experiment
+  # Edit config.json and init.md as needed
+  python run.py new-experiment
 
-  2. Copy templates:
-       cp config-template.json experiments/my-experiment/config.json
-       cp init-template.txt experiments/my-experiment/init.md
-
-  3. Edit config.json and init.md to customize
-
-  4. Run experiment:
-       python run.py --name my-experiment
+  # Option 2: Create from scratch
+  mkdir experiments/my-experiment
+  cp config-template.json experiments/my-experiment/config.json
+  cp init-template.txt experiments/my-experiment/init.md
+  # Edit config.json and init.md
+  python run.py my-experiment
 
 Notes:
   - config.json: Set N_MINDS, MAX_ROUNDS, etc.
   - init.md: Seed messages for the pool
   - Each experiment is self-contained in its directory
+  - Template creates genealogy (TODO: tracked in config metadata)
         """
     )
 
     parser.add_argument(
-        '--name',
+        'name',
         type=str,
-        required=True,
-        help='Experiment name (REQUIRED - must be existing directory under experiments/)'
+        help='Experiment name (directory under experiments/)'
+    )
+
+    parser.add_argument(
+        '--analyze',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Run analysis after experiment (default: True)'
+    )
+
+    parser.add_argument(
+        '--template',
+        type=str,
+        help='Create new experiment from existing experiment (template name)'
     )
 
     args = parser.parse_args()
 
-    run_experiment(name=args.name)
+    # If template specified, create from template then exit
+    if args.template:
+        create_from_template(name=args.name, template_name=args.template)
+        sys.exit(0)
+
+    run_experiment(name=args.name, analyze=args.analyze)
 
 
 if __name__ == "__main__":

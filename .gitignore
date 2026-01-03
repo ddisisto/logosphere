@@ -8,9 +8,6 @@ __pycache__/
 *.so
 .Python
 
-# Experiments (each run is self-contained)
-experiments/
-
 # Logs and output
 logs/
 output/
