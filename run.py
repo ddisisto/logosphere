@@ -3,22 +3,22 @@
 Entry point for Logosphere experiments.
 
 Usage:
-    python run.py [--name NAME]
+    python run.py --name <experiment-name>
 
-Example:
-    python run.py --name first-test
+Workflow:
+    1. mkdir experiments/<name>
+    2. cp config-template.json experiments/<name>/config.json
+    3. cp init-template.txt experiments/<name>/init.md
+    4. Edit config.json and init.md
+    5. python run.py --name <name>
 
-Notes:
-    Edit config.py to customize experiment parameters (rounds, minds, etc.)
+Each experiment is self-contained with its own config.json and init.md.
 """
 
 import argparse
 import json
 import sys
 from pathlib import Path
-from datetime import datetime
-
-import yaml
 
 import config
 from pool import Pool
@@ -36,29 +36,27 @@ def print_header():
     print()
 
 
-def save_config_snapshot(exp_dir: Path) -> None:
-    """Save experiment configuration snapshot."""
-    config_data = {
-        "timestamp": datetime.now().isoformat(),
-        "parameters": {
-            "N_MINDS": config.N_MINDS,
-            "K_SAMPLES": config.K_SAMPLES,
-            "M_ACTIVE_POOL": config.M_ACTIVE_POOL,
-            "MAX_ROUNDS": config.MAX_ROUNDS,
-            "TOKEN_LIMIT": config.TOKEN_LIMIT,
-        },
-        "api": {
-            "MODEL": config.MODEL,
-            "API_BASE_URL": config.API_BASE_URL,
-        },
-        "system_prompt": config.SYSTEM_PROMPT,
-    }
+def load_experiment_config(exp_dir: Path) -> dict:
+    """
+    Load experiment configuration from config.json.
 
+    Returns dict with all config values needed for experiment.
+    """
     config_path = exp_dir / "config.json"
-    with open(config_path, 'w') as f:
-        json.dump(config_data, f, indent=2)
 
-    print(f"✓ Config snapshot: {config_path}")
+    if not config_path.exists():
+        print(f"❌ Error: config.json not found")
+        print()
+        print(f"Expected: {config_path}")
+        print()
+        print("To create config.json:")
+        print(f"  cp config-template.json {config_path}")
+        print(f"  # Edit {config_path} to customize parameters")
+        print()
+        sys.exit(1)
+
+    with open(config_path) as f:
+        return json.load(f)
 
 
 def save_novel_memes(exp_dir: Path, novel_memes: list[dict]) -> None:
@@ -88,23 +86,58 @@ def save_novel_memes(exp_dir: Path, novel_memes: list[dict]) -> None:
     print(f"✓ Novel memes: {novel_path} ({len(novel_memes)} messages)")
 
 
-def run_experiment(name: str = None) -> None:
+def run_experiment(name: str) -> None:
     """
     Run Logosphere experiment.
 
     Args:
-        name: Experiment name (default: timestamp)
+        name: Experiment name (REQUIRED - must be an existing directory)
 
-    Notes:
-        All parameters are read from config.py.
-        Edit config.py before running to customize the experiment.
+    Workflow:
+        1. Create experiments/<name>/ directory
+        2. Copy config-template.json to experiments/<name>/config.json and edit
+        3. Copy init-template.txt to experiments/<name>/init.md and edit
+        4. Run: python run.py --name <name>
     """
     print_header()
 
-    # Create experiment directory
-    exp_dir = config.create_experiment_dir(name)
-    print(f"Experiment: {exp_dir.name}")
+    # Verify experiment directory exists
+    exp_dir = config.EXPERIMENTS_DIR / name
+    if not exp_dir.exists():
+        print(f"❌ Error: Experiment directory not found")
+        print()
+        print(f"Expected: {exp_dir}")
+        print()
+        print("To create experiment:")
+        print(f"  mkdir -p {exp_dir}")
+        print(f"  cp config-template.json {exp_dir}/config.json")
+        print(f"  cp init-template.txt {exp_dir}/init.md")
+        print(f"  # Edit config.json and init.md")
+        print(f"  python run.py --name {name}")
+        print()
+        sys.exit(1)
+
+    print(f"Experiment: {name}")
     print(f"Directory: {exp_dir}")
+    print()
+
+    # Load experiment config
+    print("Loading config.json...")
+    exp_config = load_experiment_config(exp_dir)
+    params = exp_config.get('parameters', {})
+    api = exp_config.get('api', {})
+
+    # Extract parameters
+    N_MINDS = params.get('N_MINDS', config.N_MINDS)
+    K_SAMPLES = params.get('K_SAMPLES', config.K_SAMPLES)
+    M_ACTIVE_POOL = params.get('M_ACTIVE_POOL', config.M_ACTIVE_POOL)
+    MAX_ROUNDS = params.get('MAX_ROUNDS', config.MAX_ROUNDS)
+    TOKEN_LIMIT = params.get('TOKEN_LIMIT', config.TOKEN_LIMIT)
+    MODEL = api.get('MODEL', config.MODEL)
+    SYSTEM_PROMPT = exp_config.get('system_prompt', config.SYSTEM_PROMPT)
+
+    print(f"✓ N_MINDS={N_MINDS}, K_SAMPLES={K_SAMPLES}, M_ACTIVE_POOL={M_ACTIVE_POOL}")
+    print(f"✓ MAX_ROUNDS={MAX_ROUNDS}, TOKEN_LIMIT={TOKEN_LIMIT}")
     print()
 
     # Check for init.md
@@ -115,9 +148,8 @@ def run_experiment(name: str = None) -> None:
         print(f"Expected: {init_path}")
         print()
         print("To create init.md:")
-        print(f"  1. cp {config.INIT_TEMPLATE} {init_path}")
-        print(f"  2. Edit {init_path} to customize seed messages")
-        print(f"  3. Run experiment again")
+        print(f"  cp {config.INIT_TEMPLATE} {init_path}")
+        print(f"  # Edit {init_path} to customize seed messages")
         print()
         sys.exit(1)
 
@@ -128,20 +160,13 @@ def run_experiment(name: str = None) -> None:
     print()
 
     # Initialize pool with seeds
-    pool = Pool(max_active=config.M_ACTIVE_POOL)
+    pool = Pool(max_active=M_ACTIVE_POOL)
     for msg in seed_messages:
         pool.add_message(msg)
 
     print(f"Pool initialized:")
     print(f"  Total messages: {pool.size()}")
-    print(f"  Active pool: {pool.active_size()} (tail {config.M_ACTIVE_POOL})")
-    print()
-
-    # Use config.py values directly
-    max_rounds = config.MAX_ROUNDS
-
-    # Save config snapshot (read-only record of parameters used)
-    save_config_snapshot(exp_dir)
+    print(f"  Active pool: {pool.active_size()} (tail {M_ACTIVE_POOL})")
     print()
 
     # Initialize logger
@@ -153,44 +178,40 @@ def run_experiment(name: str = None) -> None:
         # Log experiment start
         logger.log_experiment_start(
             config={
-                "N_MINDS": config.N_MINDS,
-                "K_SAMPLES": config.K_SAMPLES,
-                "M_ACTIVE_POOL": config.M_ACTIVE_POOL,
-                "MAX_ROUNDS": config.MAX_ROUNDS,
-                "TOKEN_LIMIT": config.TOKEN_LIMIT,
-                "MODEL": config.MODEL,
+                "N_MINDS": N_MINDS,
+                "K_SAMPLES": K_SAMPLES,
+                "M_ACTIVE_POOL": M_ACTIVE_POOL,
+                "MAX_ROUNDS": MAX_ROUNDS,
+                "TOKEN_LIMIT": TOKEN_LIMIT,
+                "MODEL": MODEL,
             },
             init_signature="",  # No longer used
             num_seeds=len(seed_messages)
         )
 
-        # Create orchestrator
-        orchestrator = Orchestrator(pool, logger)
+        # Create orchestrator with experiment config
+        orchestrator = Orchestrator(
+            pool=pool,
+            logger=logger,
+            n_minds=N_MINDS,
+            k_samples=K_SAMPLES,
+            system_prompt=SYSTEM_PROMPT,
+            token_limit=TOKEN_LIMIT
+        )
 
         # Track novel memes (messages added during experiment)
         novel_memes = []
 
         # Run experiment
-        print(f"Running {max_rounds} rounds with {config.N_MINDS} Minds...")
+        print(f"Running {MAX_ROUNDS} rounds with {N_MINDS} Minds...")
         print()
 
         try:
-            for round_num in range(1, max_rounds + 1):
-                print(f"Round {round_num}/{max_rounds}...", end=" ", flush=True)
-
-                # Track pool size before round
-                pool_size_before = pool.size()
+            for round_num in range(1, MAX_ROUNDS + 1):
+                print(f"Round {round_num}/{MAX_ROUNDS}...", end=" ", flush=True)
 
                 # Run round
                 messages_added = orchestrator.run_round(round_num)
-
-                # Extract novel memes added this round
-                # Get the messages that were just added (pool delta)
-                new_messages = pool.get_all()[pool_size_before:]
-
-                # We need to get metadata from the log for these messages
-                # For now, we'll track them from orchestrator's last round
-                # The orchestrator logs the full context, so we can reconstruct
 
                 print(f"✓ ({messages_added} messages, {pool.size()} total)")
 
@@ -199,7 +220,7 @@ def run_experiment(name: str = None) -> None:
             print("EXPERIMENT COMPLETE")
             print("=" * 60)
             print()
-            print(f"Rounds completed: {max_rounds}")
+            print(f"Rounds completed: {MAX_ROUNDS}")
             print(f"Final pool size: {pool.size()}")
             print(f"Total tokens: {orchestrator.total_tokens:,}")
             print()
@@ -226,7 +247,7 @@ def run_experiment(name: str = None) -> None:
 
             # Log experiment end
             logger.log_experiment_end(
-                total_rounds=max_rounds,
+                total_rounds=MAX_ROUNDS,
                 final_pool_size=pool.size(),
                 total_tokens=orchestrator.total_tokens
             )
@@ -238,7 +259,7 @@ def run_experiment(name: str = None) -> None:
             print()
             print()
             print("Experiment interrupted by user")
-            print(f"Completed rounds: {round_num - 1}/{max_rounds}")
+            print(f"Completed rounds: {round_num - 1}/{MAX_ROUNDS}")
             print(f"Pool size: {pool.size()}")
             print(f"Tokens used: {orchestrator.total_tokens:,}")
             print()
@@ -251,23 +272,31 @@ def main():
         description="Run Logosphere memetic dynamics experiment",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  python run.py
-  python run.py --name first-test
+Workflow:
+  1. Create experiment directory:
+       mkdir experiments/my-experiment
+
+  2. Copy templates:
+       cp config-template.json experiments/my-experiment/config.json
+       cp init-template.txt experiments/my-experiment/init.md
+
+  3. Edit config.json and init.md to customize
+
+  4. Run experiment:
+       python run.py --name my-experiment
 
 Notes:
-  - Edit config.py to customize experiment parameters
-  - Experiment directory: experiments/<name>/
-  - Must create init.md in experiment directory before running
-  - Use 'cp init-template.txt experiments/<name>/init.md' to start
+  - config.json: Set N_MINDS, MAX_ROUNDS, etc.
+  - init.md: Seed messages for the pool
+  - Each experiment is self-contained in its directory
         """
     )
 
     parser.add_argument(
         '--name',
         type=str,
-        default=None,
-        help='Experiment name (default: timestamp)'
+        required=True,
+        help='Experiment name (REQUIRED - must be existing directory under experiments/)'
     )
 
     args = parser.parse_args()
