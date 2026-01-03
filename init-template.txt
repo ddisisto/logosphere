@@ -38,6 +38,3 @@ Tigthen loops.
 ---
 Selection becomes the system.
 ---
-
----
-~init

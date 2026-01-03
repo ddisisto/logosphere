@@ -3,10 +3,13 @@
 Entry point for Logosphere experiments.
 
 Usage:
-    python run.py [--name NAME] [--rounds N]
+    python run.py [--name NAME]
 
 Example:
-    python run.py --name first-test --rounds 5
+    python run.py --name first-test
+
+Notes:
+    Edit config.py to customize experiment parameters (rounds, minds, etc.)
 """
 
 import argparse
@@ -85,13 +88,16 @@ def save_novel_memes(exp_dir: Path, novel_memes: list[dict]) -> None:
     print(f"✓ Novel memes: {novel_path} ({len(novel_memes)} messages)")
 
 
-def run_experiment(name: str = None, rounds: int = None) -> None:
+def run_experiment(name: str = None) -> None:
     """
     Run Logosphere experiment.
 
     Args:
         name: Experiment name (default: timestamp)
-        rounds: Number of rounds (default: config.MAX_ROUNDS)
+
+    Notes:
+        All parameters are read from config.py.
+        Edit config.py before running to customize the experiment.
     """
     print_header()
 
@@ -121,10 +127,6 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
     print(f"✓ Loaded {len(seed_messages)} seed messages")
     print()
 
-    # Save config snapshot
-    save_config_snapshot(exp_dir)
-    print()
-
     # Initialize pool with seeds
     pool = Pool(max_active=config.M_ACTIVE_POOL)
     for msg in seed_messages:
@@ -135,8 +137,12 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
     print(f"  Active pool: {pool.active_size()} (tail {config.M_ACTIVE_POOL})")
     print()
 
-    # Determine rounds
-    max_rounds = rounds if rounds is not None else config.MAX_ROUNDS
+    # Use config.py values directly
+    max_rounds = config.MAX_ROUNDS
+
+    # Save config snapshot (read-only record of parameters used)
+    save_config_snapshot(exp_dir)
+    print()
 
     # Initialize logger
     log_dir = exp_dir / "logs"
@@ -150,7 +156,7 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
                 "N_MINDS": config.N_MINDS,
                 "K_SAMPLES": config.K_SAMPLES,
                 "M_ACTIVE_POOL": config.M_ACTIVE_POOL,
-                "MAX_ROUNDS": max_rounds,
+                "MAX_ROUNDS": config.MAX_ROUNDS,
                 "TOKEN_LIMIT": config.TOKEN_LIMIT,
                 "MODEL": config.MODEL,
             },
@@ -248,10 +254,9 @@ def main():
 Examples:
   python run.py
   python run.py --name first-test
-  python run.py --name quick-test --rounds 5
-  python run.py --rounds 20
 
 Notes:
+  - Edit config.py to customize experiment parameters
   - Experiment directory: experiments/<name>/
   - Must create init.md in experiment directory before running
   - Use 'cp init-template.txt experiments/<name>/init.md' to start
@@ -265,16 +270,9 @@ Notes:
         help='Experiment name (default: timestamp)'
     )
 
-    parser.add_argument(
-        '--rounds',
-        type=int,
-        default=None,
-        help=f'Number of rounds (default: {config.MAX_ROUNDS})'
-    )
-
     args = parser.parse_args()
 
-    run_experiment(name=args.name, rounds=args.rounds)
+    run_experiment(name=args.name)
 
 
 if __name__ == "__main__":
