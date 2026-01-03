@@ -3,7 +3,6 @@ Parsed in same way as Mind outputs
 Pre-experiment thoughts and notes can go here before first delim
 metadata for tracking, etc: if needed
 All messages that follow are used to pre-seed the pool
-Per usual, signature appended to all messages
 ---
 Understand your environment
 ---

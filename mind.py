@@ -28,26 +28,23 @@ def format_input(system_prompt: str, messages: list[str]) -> str:
     return f"{system_prompt}\n{DELIMITER}\n{formatted_messages}"
 
 
-def parse_output(raw: str, signature_max_len: int = 32) -> tuple[str, list[str], bool, str]:
+def parse_output(raw: str) -> tuple[str, list[str]]:
     """
     Parse Mind output into components.
 
     Rules:
     - Split on DELIMITER (---) on its own line
-    - First block = thinking (not transmitted)
-    - Each subsequent non-blank block = message
-    - First blank block = termination (completed=True)
-    - Final unterminated DELIMITER = signature (appended to all messages)
-    - No blank block before end = incomplete (completed=False, nothing transmitted)
+    - First block = thinking (private, not transmitted)
+    - All subsequent blocks = messages (transmitted)
+    - Blank blocks are valid messages (transmitted as-is)
+    - No termination requirement - partial output is valid
 
     Returns:
-        (thinking, messages, completed, signature)
+        (thinking, messages)
 
     where:
         thinking: str - private reasoning before first ---
-        messages: list[str] - messages to transmit
-        completed: bool - True if properly terminated with blank block
-        signature: str - context signature if present (truncated to signature_max_len)
+        messages: list[str] - all messages to transmit
     """
     # Normalize: ensure trailing newline for consistent split behavior
     if not raw.endswith('\n'):
@@ -62,44 +59,12 @@ def parse_output(raw: str, signature_max_len: int = 32) -> tuple[str, list[str],
     blocks = raw.split(delimiter_pattern)
 
     # First block is thinking
-    thinking = blocks[0].lstrip('\n') if blocks else ""  # Remove any leading newline we added
+    thinking = blocks[0].lstrip('\n') if blocks else ""
 
-    # Process blocks as messages, looking for termination
-    messages = []
-    completed = False
-    termination_index = -1
+    # All remaining blocks are messages (including blank ones)
+    messages = blocks[1:] if len(blocks) > 1 else []
 
-    for i, block in enumerate(blocks[1:], start=1):  # Skip thinking block
-        stripped = block.strip()
-
-        # Blank block = termination
-        if not stripped:
-            completed = True
-            termination_index = i
-            break
-
-        # Non-blank block = message
-        messages.append(block)
-
-    # Check for signature ONLY if output completed
-    # Signature = non-empty content after blank terminator
-    signature = ""
-    if completed and termination_index < len(blocks) - 1:
-        # There's content after the termination block
-        potential_sig = blocks[termination_index + 1].strip()
-        if potential_sig and potential_sig != DELIMITER:
-            signature = potential_sig[:signature_max_len]
-
-    # If not completed, drop all messages and signature
-    if not completed:
-        messages = []
-        signature = ""
-
-    # Append signature to all transmitted messages
-    if signature and messages:
-        messages = [f"{msg}\n\n{signature}" for msg in messages]
-
-    return thinking, messages, completed, signature
+    return thinking, messages
 
 
 def invoke_mind(system_prompt: str, messages: list[str], token_limit: int = TOKEN_LIMIT) -> dict:
@@ -115,8 +80,6 @@ def invoke_mind(system_prompt: str, messages: list[str], token_limit: int = TOKE
         {
             'thinking': str,
             'transmitted': list[str],
-            'completed': bool,
-            'signature': str,
             'tokens_used': int,
             'raw_output': str
         }
@@ -155,13 +118,11 @@ def invoke_mind(system_prompt: str, messages: list[str], token_limit: int = TOKE
     tokens_used = data['usage']['completion_tokens']
 
     # Parse output
-    thinking, transmitted, completed, signature = parse_output(raw_output)
+    thinking, transmitted = parse_output(raw_output)
 
     return {
         'thinking': thinking,
         'transmitted': transmitted,
-        'completed': completed,
-        'signature': signature,
         'tokens_used': tokens_used,
         'raw_output': raw_output
     }

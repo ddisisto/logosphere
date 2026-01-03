@@ -49,7 +49,6 @@ def save_config_snapshot(exp_dir: Path) -> None:
             "API_BASE_URL": config.API_BASE_URL,
         },
         "system_prompt": config.SYSTEM_PROMPT,
-        "init_signature": config.INIT_SIGNATURE,
     }
 
     config_path = exp_dir / "config.json"
@@ -65,7 +64,7 @@ def save_novel_memes(exp_dir: Path, novel_memes: list[dict]) -> None:
 
     Args:
         exp_dir: Experiment directory
-        novel_memes: List of dicts with keys: round, mind_id, signature, content
+        novel_memes: List of dicts with keys: round, mind_id, content
     """
     novel_path = exp_dir / "novel_memes.yaml"
 
@@ -77,7 +76,6 @@ def save_novel_memes(exp_dir: Path, novel_memes: list[dict]) -> None:
             # Write metadata
             f.write(f"round: {meme['round']}\n")
             f.write(f"mind_id: {meme['mind_id']}\n")
-            f.write(f"signature: {repr(meme['signature'])}\n")
 
             # Write content as literal block scalar
             f.write("content: |-\n")
@@ -119,9 +117,8 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
 
     # Load init.md
     print(f"Loading init.md...")
-    seed_messages, init_signature = load_init_file(init_path)
+    seed_messages = load_init_file(init_path)
     print(f"✓ Loaded {len(seed_messages)} seed messages")
-    print(f"✓ Init signature: '{init_signature}'")
     print()
 
     # Save config snapshot
@@ -157,7 +154,7 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
                 "TOKEN_LIMIT": config.TOKEN_LIMIT,
                 "MODEL": config.MODEL,
             },
-            init_signature=init_signature,
+            init_signature="",  # No longer used
             num_seeds=len(seed_messages)
         )
 
@@ -214,7 +211,6 @@ def run_experiment(name: str = None, rounds: int = None) -> None:
                             novel_memes.append({
                                 'round': event['round'],
                                 'mind_id': event['mind_id'],
-                                'signature': event['signature'],
                                 'content': msg
                             })
 

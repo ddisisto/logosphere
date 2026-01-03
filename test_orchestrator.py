@@ -34,11 +34,9 @@ def test_orchestrator_round():
         # Mock invoke_mind to avoid API calls
         mock_result = {
             'thinking': 'Mock thinking',
-            'transmitted': ['mock response\n\n~test'],
-            'completed': True,
-            'signature': '~test',
+            'transmitted': ['mock response'],
             'tokens_used': 100,
-            'raw_output': 'Mock thinking\n---\nmock response\n---\n\n---\n~test'
+            'raw_output': 'Mock thinking\n---\nmock response'
         }
 
         with patch('orchestrator.invoke_mind', return_value=mock_result):
@@ -83,10 +81,8 @@ def test_orchestrator_multiple_rounds():
         mock_result = {
             'thinking': 'thinking',
             'transmitted': ['response'],
-            'completed': True,
-            'signature': '',
             'tokens_used': 50,
-            'raw_output': 'thinking\n---\nresponse\n---\n\n---'
+            'raw_output': 'thinking\n---\nresponse'
         }
 
         with patch('orchestrator.invoke_mind', return_value=mock_result):
@@ -109,9 +105,9 @@ def test_orchestrator_multiple_rounds():
         logger.close()
 
 
-def test_orchestrator_no_signature_filtering():
-    """Test that orchestrator doesn't filter any signatures."""
-    print("\nTesting no signature filtering...")
+def test_orchestrator_all_messages_accepted():
+    """Test that orchestrator accepts all transmitted messages."""
+    print("\nTesting all messages accepted...")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         log_dir = Path(tmpdir) / "logs"
@@ -120,24 +116,22 @@ def test_orchestrator_no_signature_filtering():
 
         orchestrator = Orchestrator(pool, logger)
 
-        # Mock Mind that uses init signature (should NOT be filtered)
+        # Mock Mind that outputs various messages
         mock_result = {
-            'thinking': 'pretending to be init',
-            'transmitted': [f'message\n\n{config.INIT_SIGNATURE}'],
-            'completed': True,
-            'signature': config.INIT_SIGNATURE,
+            'thinking': 'various thoughts',
+            'transmitted': ['message 1', 'message 2', 'blank:', ''],
             'tokens_used': 50,
-            'raw_output': f'thinking\n---\nmessage\n---\n\n---\n{config.INIT_SIGNATURE}'
+            'raw_output': 'thinking\n---\nmessage 1\n---\nmessage 2\n---\nblank:\n---\n'
         }
 
         with patch('orchestrator.invoke_mind', return_value=mock_result):
             orchestrator.run_round(round_num=1)
 
-            # Messages with init signature should go to pool
-            # (no filtering - let the memes meme)
-            assert pool.size() == config.N_MINDS
-            print(f"  ✓ Messages with {config.INIT_SIGNATURE} signature added to pool")
-            print(f"  ✓ No signature filtering applied")
+            # All transmitted messages should be added (4 messages × 3 minds = 12)
+            expected = 4 * config.N_MINDS
+            assert pool.size() == expected
+            print(f"  ✓ All messages accepted (including blank messages)")
+            print(f"  ✓ No filtering applied")
 
         logger.close()
 
@@ -151,7 +145,7 @@ def run_all_tests():
 
     test_orchestrator_round()
     test_orchestrator_multiple_rounds()
-    test_orchestrator_no_signature_filtering()
+    test_orchestrator_all_messages_accepted()
 
     print()
     print("=" * 60)
@@ -163,7 +157,7 @@ def run_all_tests():
     print("  - Multiple rounds work")
     print("  - Pool deltas tracked correctly")
     print("  - Token accounting works")
-    print("  - No signature filtering (all messages pass through)")
+    print("  - All messages accepted (no filtering)")
 
 
 if __name__ == "__main__":

@@ -45,15 +45,9 @@ DELIMITER = "---"
 
 # System prompt - minimal functional framing
 SYSTEM_PROMPT = """You receive messages from others. Read them.
-You may write messages to share with others.
 
-Format: Messages separated by --- on its own line.
-To finish, write a blank message (two --- with nothing between)."""
-
-
-# Init signature - used for validation (exact match only)
-# Mind outputs with this exact signature are invalid and discarded
-INIT_SIGNATURE = "~init"
+Content before the first --- is private thinking, not transmitted.
+After ---, write messages for others, separated by ---."""
 
 
 def create_experiment_dir(name: str = None) -> Path:

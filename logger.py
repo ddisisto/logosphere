@@ -72,8 +72,6 @@ class Logger:
         input_messages: list[str],
         thinking: str,
         transmitted: list[str],
-        completed: bool,
-        signature: str,
         tokens_used: int,
         raw_output: str
     ) -> None:
@@ -85,9 +83,7 @@ class Logger:
             mind_id: Mind identifier (0 to N-1)
             input_messages: Messages sampled for this Mind
             thinking: Private reasoning (before first ---)
-            transmitted: Messages successfully transmitted to pool
-            completed: Whether output properly terminated
-            signature: Context signature (if any)
+            transmitted: Messages transmitted to pool
             tokens_used: Completion tokens consumed
             raw_output: Full raw LLM output
         """
@@ -97,8 +93,6 @@ class Logger:
             "input_messages": input_messages,
             "thinking": thinking,
             "transmitted": transmitted,
-            "completed": completed,
-            "signature": signature,
             "tokens_used": tokens_used,
             "raw_output": raw_output
         })

@@ -42,11 +42,9 @@ def test_logger():
                 mind_id=0,
                 input_messages=["msg1", "msg2", "msg3"],
                 thinking="I should respond carefully.",
-                transmitted=["response message\n\n~m0"],
-                completed=True,
-                signature="~m0",
+                transmitted=["response message"],
                 tokens_used=150,
-                raw_output="I should respond carefully.\n---\nresponse message\n---\n\n---\n~m0"
+                raw_output="I should respond carefully.\n---\nresponse message"
             )
             print("  ✓ Logged mind_invocation")
 
@@ -109,8 +107,6 @@ def test_logger():
         assert mind_inv["round"] == 1
         assert mind_inv["mind_id"] == 0
         assert len(mind_inv["input_messages"]) == 3
-        assert mind_inv["completed"] == True
-        assert mind_inv["signature"] == "~m0"
         assert mind_inv["tokens_used"] == 150
         print("  ✓ mind_invocation data correct")
 

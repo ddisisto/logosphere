@@ -63,14 +63,11 @@ class Orchestrator:
                 input_messages=sampled_messages,
                 thinking=result['thinking'],
                 transmitted=result['transmitted'],
-                completed=result['completed'],
-                signature=result['signature'],
                 tokens_used=result['tokens_used'],
                 raw_output=result['raw_output']
             )
 
             # Add transmitted messages to pool
-            # No signature validation - let all messages through
             for msg in result['transmitted']:
                 self.pool.add_message(msg)
                 round_messages.append(msg)
