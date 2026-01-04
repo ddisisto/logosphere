@@ -12,6 +12,7 @@ __pycache__/
 logs/
 output/
 *.log
+.archive/
 
 # IDE
 .vscode/
@@ -22,6 +23,3 @@ output/
 # OS
 .DS_Store
 Thumbs.db
-
-# Screenshots (temp artifacts)
-*.png
