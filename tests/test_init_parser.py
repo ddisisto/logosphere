@@ -3,15 +3,15 @@ Test init_parser.py functionality
 """
 
 from pathlib import Path
-from init_parser import load_init_file
-from config import INIT_TEMPLATE
+from src.core.init_parser import load_init_file
+from src.config import EXPERIMENTS_DIR
 
 
 def test_load_init_template():
-    """Test parsing init-template.txt"""
-    print("Testing load_init_file with init-template.txt...")
+    """Test parsing baseline init.md"""
+    print("Testing load_init_file with baseline experiment...")
 
-    messages = load_init_file(INIT_TEMPLATE)
+    messages = load_init_file(EXPERIMENTS_DIR / "_baseline" / "init.md")
 
     print(f"  ✓ Parsed init template")
     print(f"  ✓ Extracted {len(messages)} seed messages")

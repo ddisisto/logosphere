@@ -10,7 +10,7 @@ from datetime import datetime
 # Load environment variables
 def load_api_key() -> str:
     """Load API key from .env file."""
-    env_path = Path(__file__).parent / '.env'
+    env_path = Path(__file__).parent.parent / '.env'
     if env_path.exists():
         with open(env_path) as f:
             for line in f:
@@ -20,9 +20,8 @@ def load_api_key() -> str:
 
 
 # Directory structure
-PROJECT_ROOT = Path(__file__).parent
+PROJECT_ROOT = Path(__file__).parent.parent
 EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
-INIT_TEMPLATE = PROJECT_ROOT / "init-template.txt"
 
 
 # Population parameters

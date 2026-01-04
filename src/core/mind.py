@@ -5,7 +5,8 @@ Each Mind is a single stateless API call.
 """
 
 import requests
-from config import API_KEY, MODEL, API_BASE_URL, DELIMITER, TOKEN_LIMIT
+from .. import config
+from ..config import API_KEY, MODEL, API_BASE_URL, DELIMITER, TOKEN_LIMIT
 
 
 def format_input(system_prompt: str, messages: list[str]) -> str:

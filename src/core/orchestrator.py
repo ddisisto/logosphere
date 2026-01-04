@@ -2,10 +2,10 @@
 Orchestrator - coordinates rounds, Minds, and pool for Logosphere experiments.
 """
 
-from pool import Pool
-from logger import Logger
-from mind import invoke_mind
-import config
+from .pool import Pool
+from .logger import Logger
+from .mind import invoke_mind
+from .. import config
 
 
 class Orchestrator:

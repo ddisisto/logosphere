@@ -20,11 +20,14 @@ import json
 import sys
 from pathlib import Path
 
-import config
-from pool import Pool
-from logger import Logger
-from orchestrator import Orchestrator
-from init_parser import load_init_file
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src import config
+from src.core.pool import Pool
+from src.core.logger import Logger
+from src.core.orchestrator import Orchestrator
+from src.core.init_parser import load_init_file
 
 
 def print_header():

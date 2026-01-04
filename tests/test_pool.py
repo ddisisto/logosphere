@@ -1,8 +1,8 @@
 """Quick verification test for pool.py"""
 
-from pool import Pool
-from config import M_ACTIVE_POOL, K_SAMPLES, INIT_TEMPLATE
-from init_parser import load_init_file
+from src.core.pool import Pool
+from src.config import M_ACTIVE_POOL, K_SAMPLES, EXPERIMENTS_DIR
+from src.core.init_parser import load_init_file
 
 
 def test_pool():
@@ -12,8 +12,8 @@ def test_pool():
     pool = Pool(max_active=M_ACTIVE_POOL)
     print(f"✓ Pool created (max_active={M_ACTIVE_POOL})")
 
-    # Add seed messages from init template
-    seed_messages, _ = load_init_file(INIT_TEMPLATE)
+    # Add seed messages from baseline experiment
+    seed_messages = load_init_file(EXPERIMENTS_DIR / "_baseline" / "init.md")
     for msg in seed_messages:
         pool.add_message(msg)
     print(f"✓ Added {len(seed_messages)} seed messages from init template")

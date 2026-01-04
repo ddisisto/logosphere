@@ -5,7 +5,7 @@ Reuses Mind parsing logic to extract messages from init file.
 """
 
 from pathlib import Path
-from mind import parse_output
+from .mind import parse_output
 
 
 def load_init_file(init_path: Path) -> list[str]:

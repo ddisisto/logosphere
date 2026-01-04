@@ -5,8 +5,8 @@ Tests parsing logic and message formatting.
 API invocation test requires actual API call (marked clearly).
 """
 
-from mind import format_input, parse_output, invoke_mind
-from config import SYSTEM_PROMPT
+from src.core.mind import format_input, parse_output, invoke_mind
+from src.config import SYSTEM_PROMPT
 
 
 def test_format_input():

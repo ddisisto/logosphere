@@ -5,7 +5,7 @@ Test logger.py functionality
 import json
 import tempfile
 from pathlib import Path
-from logger import Logger
+from src.core.logger import Logger
 
 
 def test_logger():

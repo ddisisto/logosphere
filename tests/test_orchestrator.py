@@ -7,10 +7,10 @@ Note: This doesn't make real API calls - we'll test that end-to-end in run.py
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
-from orchestrator import Orchestrator
-from pool import Pool
-from logger import Logger
-import config
+from src.core.orchestrator import Orchestrator
+from src.core.pool import Pool
+from src.core.logger import Logger
+from src import config
 
 
 def test_orchestrator_round():

@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import Callable
 import os
 
-import config
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src import config
 
 # Optional imports for embeddings tool
 try:
@@ -181,7 +184,7 @@ def _load_all_messages(exp_dir: Path) -> tuple[list[str], dict]:
     # Load seed messages from init.md
     init_path = exp_dir / "init.md"
     if init_path.exists():
-        from init_parser import load_init_file
+        from src.core.init_parser import load_init_file
         seed_messages = load_init_file(init_path)
         messages.extend(seed_messages)
     else:
