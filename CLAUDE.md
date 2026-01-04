@@ -1,4 +1,4 @@
-# CLAUDE.md - Implementation Specification
+# CLAUDE.md - Architecture & Principles
 
 ## Experimental Boundary
 
@@ -12,429 +12,295 @@
 - API calls to LLM
 - Logging system
 - File I/O
+- Analysis tools
 
 **Critical:** Nothing inside the experiment can see round numbers, timestamps, authorship, or any metadata. Messages are anonymous and timeless from the perspective of Minds.
 
----
-
-## Implementation Structure
-
-```
-logosphere/
-├── orchestrator.py    # Main loop, coordination
-├── pool.py           # Message storage and sampling
-├── mind.py           # API invocation and parsing
-├── logger.py         # Structured logging
-├── config.py         # Parameters and system prompt
-└── run.py            # Entry point
-```
+This boundary is what makes memetic dynamics observable - the system evolves based purely on message content, not external coordination.
 
 ---
 
-## Experiment Directory Structure
-
-Each experiment run is self-contained:
+## Current Structure
 
 ```
 logosphere/
-├── pool.py, mind.py, etc.        # Core implementation
-├── init-template.txt             # Template for seeding
-└── experiments/
-    ├── 2026-01-02-first-run/
-    │   ├── init.md               # Seed messages (parsed like Mind output)
-    │   ├── config.json           # Parameter snapshot
-    │   └── logs/                 # JSONL experiment logs
-    └── 2026-01-02-second-run/
-        └── ...
+├── src/
+│   ├── core/              # Experiment engine
+│   │   ├── pool.py        # Message storage and sampling
+│   │   ├── mind.py        # API invocation and parsing
+│   │   ├── orchestrator.py # Main loop, coordination
+│   │   ├── logger.py      # Structured logging
+│   │   └── init_parser.py # Seed message parsing
+│   ├── analysis/          # Analysis tools (embeddings, vector DB, attractors)
+│   └── config.py          # Parameters and system prompt
+├── scripts/
+│   ├── run.py             # Experiment entry point
+│   └── analyze.py         # Post-hoc analysis
+├── tests/                 # Validation tests
+└── experiments/           # Self-contained experiment runs
+    └── <name>/
+        ├── init.md        # Seed messages
+        ├── config.json    # Parameter snapshot
+        └── logs/          # JSONL event stream
 ```
 
-### init.md Format
+---
 
-Seeds the pool by reusing Mind parsing:
-- Pre-delimiter content: notes, metadata (not transmitted)
-- Messages: standard `---` separated blocks
-- Termination: blank message required
-- Signature: `~init` (appended to all seed messages)
+## Core Mechanics
 
-**Validation:** Mind outputs with signature exactly matching `~init` are invalid and discarded (prevents impersonation).
+### Pool (src/core/pool.py)
+
+Message storage with FIFO active window:
+
+- **History**: All messages ever added (append-only)
+- **Active Pool**: Tail M messages (sampling window)
+- **Sampling**: Uniform random from active pool only
+
+```python
+pool = Pool(max_active=200)
+pool.add_message(msg)           # Append to history
+sample = pool.sample(k=10)      # Sample from tail M
+```
+
+**Why tail sampling?** Creates recency bias without explicit timestamps. Recent messages more likely to be sampled, but old messages eventually fall out of active window. This is how "forgetting" happens in the pool.
+
+### Mind (src/core/mind.py)
+
+Stateless LLM invocation:
+
+- **Input**: System prompt + K sampled messages
+- **Output**: Thinking (private) + transmitted messages (public)
+- **Parsing**: Everything before first `---` is thinking, blocks between `---` are messages
+
+```python
+result = invoke_mind(
+    system_prompt="You receive messages...",
+    messages=sample,
+    token_limit=8000
+)
+# result['thinking'] - not transmitted
+# result['transmitted'] - added to pool
+```
+
+**Key:** Each Mind invocation is independent. No conversation history, no memory. Only the pool persists.
+
+### Orchestrator (src/core/orchestrator.py)
+
+Coordinates rounds:
+
+1. Sample K messages from pool
+2. Invoke Mind with sample
+3. Parse output (thinking vs transmitted)
+4. Add transmitted messages to pool
+5. Log everything
+6. Repeat for N minds per round
+
+**Sequential invocation:** Minds within a round see pool state as it evolves. Mind 0 adds messages that Mind 1 might sample.
+
+### Logging (src/core/logger.py)
+
+JSONL event stream:
+
+- `experiment_start` - config, seed count
+- `round_start` - pool state
+- `mind_invocation` - full I/O (input sample, thinking, transmitted, tokens)
+- `round_end` - pool delta
+- `experiment_end` - summary stats
+
+**Why JSONL?** Streaming, line-at-a-time, easy to parse, survives interruptions.
+
+---
+
+## Experiment Configuration
+
+Each experiment is self-contained in `experiments/<name>/`:
+
+### config.json
+
+```json
+{
+  "N_MINDS": 1,
+  "K_SAMPLES": 10,
+  "M_ACTIVE_POOL": 200,
+  "MAX_ROUNDS": 200,
+  "TOKEN_LIMIT": 8000,
+  "MODEL": "anthropic/claude-sonnet-4.5",
+  "SYSTEM_PROMPT": "You receive messages from others..."
+}
+```
+
+**Key parameters:**
+- `N_MINDS`: Minds per round (1 = single model, >1 = population)
+- `K_SAMPLES`: Messages sampled per Mind (attention budget)
+- `M_ACTIVE_POOL`: Active pool size (recency window)
+- `MAX_ROUNDS`: Stopping condition
+- `MODEL`: OpenRouter model ID
+
+### init.md
+
+Seed messages in Mind output format:
+
+```
+Optional notes here (not transmitted to pool)
+
+---
+First seed message
+---
+Second seed message
+---
+```
+
+**Parsing:** Reuses Mind parsing logic. Everything before first `---` is ignored. Blocks between `---` are messages.
 
 **Workflow:**
-1. Copy `init-template.txt` to `experiments/run-name/init.md`
+1. Copy from template experiment (e.g., `experiments/_baseline/init.md`)
 2. Customize seed messages
-3. Run experiment (init.md parsed to seed pool)
+3. Run experiment
 
 ---
 
-## Sub-Task 1: Core Data Structures
+## Analysis Pipeline
 
-**Deliverable:** `pool.py`, `config.py`, `init_parser.py`
+### Built-in Tools (scripts/analyze.py)
 
-### pool.py
-
-```python
-class Pool:
-    def __init__(self, max_active: int):
-        """
-        max_active: M (tail size for active pool)
-        """
-        pass
-
-    def add_message(self, content: str) -> None:
-        """Add message to pool (appends to history)"""
-        pass
-
-    def sample(self, k: int) -> list[str]:
-        """Sample k messages uniformly from active pool (tail M)"""
-        pass
-
-    def get_active(self) -> list[str]:
-        """Return active pool (tail M messages)"""
-        pass
-
-    def get_all(self) -> list[str]:
-        """Return full history"""
-        pass
-
-    def size(self) -> int:
-        """Return total messages in history"""
-        pass
-```
-
-### config.py
-
-```python
-# Directory structure
-PROJECT_ROOT = Path(__file__).parent
-EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
-INIT_TEMPLATE = PROJECT_ROOT / "init-template.txt"
-
-# Population parameters
-N_MINDS = 3
-K_SAMPLES = 3
-M_ACTIVE_POOL = 15
-MAX_ROUNDS = 10
-TOKEN_LIMIT = 2000
-
-# API configuration
-API_KEY = load_api_key()  # from .env
-MODEL = "anthropic/claude-3.5-sonnet"
-API_BASE_URL = "https://openrouter.ai/api/v1"
-
-# System prompt
-SYSTEM_PROMPT = """You receive messages from others. Read them.
-You may write messages to share with others.
-
-Format: Messages separated by --- on its own line.
-To finish, write a blank message (two --- with nothing between)."""
-
-# Init signature for validation
-INIT_SIGNATURE = "~init"
-
-# Utilities
-def create_experiment_dir(name: str = None) -> Path:
-    """Create timestamped experiment directory"""
-```
-
-### init_parser.py
-
-```python
-def load_init_file(init_path: Path) -> tuple[list[str], str]:
-    """Parse init.md to extract seed messages and signature"""
-```
-
-**Note:** No signature validation/filtering. All Mind outputs go to pool regardless of signature. Let the memes meme.
-
-**Verification:** Can create pool, add messages, sample correctly. Active pool is tail M. Can parse init.md.
-
----
-
-## Sub-Task 2: Mind Invocation
-
-**Deliverable:** `mind.py`
-
-```python
-def invoke_mind(system_prompt: str, messages: list[str], token_limit: int) -> dict:
-    """
-    Invokes LLM with formatted input.
-
-    Returns:
-    {
-        'thinking': str,           # Private reasoning (before first ---)
-        'transmitted': list[str],  # Messages to pool
-        'completed': bool,         # True if terminated with blank block
-        'tokens_used': int,
-        'raw_output': str
-    }
-    """
-    pass
-
-def format_input(system_prompt: str, messages: list[str]) -> str:
-    """
-    Format: system_prompt + delimiter + messages separated by delimiter
-    """
-    pass
-
-def parse_output(raw: str) -> tuple[str, list[str], bool]:
-    """
-    Parse output into (thinking, messages, completed).
-
-    Rules:
-    - Everything before first --- is thinking
-    - Each non-blank block between --- is a message
-    - First blank block terminates (completed=True)
-    - No termination = completed=False, nothing transmitted
-    """
-    pass
-```
-
-**Verification:** Can invoke API, parse output correctly, handle termination.
-
----
-
-## Sub-Task 3: Logging
-
-**Deliverable:** `logger.py`
-
-```python
-class Logger:
-    def __init__(self, output_dir: Path):
-        """Initialize logger - creates experiment.jsonl in output_dir"""
-
-    def log_experiment_start(self, config: dict, init_signature: str, num_seeds: int) -> None:
-        """Log experiment initialization"""
-
-    def log_round_start(self, round_num: int, pool_size: int, active_pool_size: int) -> None:
-        """Log round start with pool state"""
-
-    def log_mind_invocation(
-        self,
-        round_num: int,
-        mind_id: int,
-        input_messages: list[str],
-        thinking: str,
-        transmitted: list[str],
-        completed: bool,
-        signature: str,
-        tokens_used: int,
-        raw_output: str
-    ) -> None:
-        """Log Mind invocation and output"""
-
-    def log_round_end(self, round_num: int, messages_added: int, pool_delta: list[str]) -> None:
-        """Log round end with pool delta (new messages added)"""
-
-    def log_experiment_end(self, total_rounds: int, final_pool_size: int, total_tokens: int) -> None:
-        """Log experiment completion"""
-```
-
-**Format:** Single JSONL file (`experiment.jsonl`) with typed events:
-- `experiment_start` - config, init signature, seed count
-- `round_start` - round number, pool sizes
-- `mind_invocation` - full Mind I/O and metadata
-- `round_end` - pool delta (messages added this round)
-- `experiment_end` - summary statistics
-
-**Design:** Streaming writes with flush, pool deltas (not snapshots), ISO timestamps, context manager support.
-
-**Verification:** Logs written correctly, typed events parseable, complete data for reconstruction.
-
----
-
-## Sub-Task 4: Orchestrator
-
-**Deliverable:** `orchestrator.py`
-
-```python
-class Orchestrator:
-    def __init__(self, config, pool, logger):
-        pass
-
-    def run_round(self, round_num: int) -> int:
-        """
-        Execute one round:
-        1. For each mind (0 to N-1):
-           - Sample K messages from pool
-           - Invoke mind
-           - Parse output
-           - Add transmitted messages to pool
-           - Log interaction
-
-        Returns: number of messages added to pool
-        """
-        pass
-
-    def run(self, max_rounds: int) -> None:
-        """
-        Execute experiment:
-        1. Initialize pool with seed messages
-        2. For each round until max_rounds:
-           - Run round
-           - Save pool snapshot
-           - Check stopping conditions
-        """
-        pass
-```
-
-**Verification:** Can run multiple rounds, pool grows, logs are complete.
-
----
-
-## Sub-Task 5: Entry Point
-
-**Deliverable:** `run.py`
-
-```python
-#!/usr/bin/env python3
-"""
-Entry point for Logosphere experiment.
-
-Usage:
-    python run.py [--rounds N] [--output-dir PATH]
-"""
-
-if __name__ == "__main__":
-    # Parse args
-    # Load config
-    # Initialize pool with seeds
-    # Initialize logger
-    # Create orchestrator
-    # Run experiment
-    # Print summary
-```
-
-**Verification:** Can run end-to-end experiment, produces logs and results.
-
----
-
-## Sub-Task 6: Analysis Stage
-
-**Deliverable:** `analyze.py`
-
-**Purpose:** Extract insights from experiment logs post-hoc or as final step of experiment run.
-
-### Entry Point
-
+**novel-memes** - Extract all transmitted messages to YAML
 ```bash
-# Auto-run after experiment (default)
-python run.py --name my-experiment
-
-# Skip analysis for fast iteration
-python run.py --name my-experiment --no-analyze
-
-# Re-run or extend analysis later
-python analyze.py my-experiment [--tool <name>]
+python scripts/analyze.py <experiment> --tool novel-memes
 ```
 
-### Analysis Tool Pattern
-
-```python
-def analyze_<toolname>(exp_dir: Path) -> None:
-    """Tool description (shown in --list-tools)."""
-    # Read experiment.jsonl
-    # Extract/compute insights
-    # Write outputs to exp_dir
-    # Print summary
-
-# Register in TOOLS dict
-TOOLS['toolname'] = analyze_<toolname>
+**embeddings** - Generate embeddings and diversity metrics
+```bash
+python scripts/analyze.py <experiment> --tool embeddings
 ```
 
-### Default Tool: novel-memes
+Produces:
+- `embeddings.npz` - Cached vectors (text-embedding-3-small)
+- `diversity_metrics.json` - Time series (similarity, drift, volume)
+- `diversity_plots.png` - Visualizations
 
-Extracts all transmitted messages to `novel_memes.yaml`:
+### Extensible Framework
 
-```yaml
----
-round: N
-mind_id: M
-content: |-
-  Message text
-```
+Add new tools by:
+1. Define `analyze_<toolname>(exp_dir: Path)` in `analyze.py`
+2. Register in `TOOLS` dict
+3. Done
 
-**Data source:** All `mind_invocation` events in `experiment.jsonl`
-
-### Adding New Tools
-
-1. Define function in `analyze.py`
-2. Add to `TOOLS` registry
-3. Done - no other changes needed
-
-**Future examples:**
-- `dynamics` - Pool growth over time (CSV/plot)
-- `diversity` - Message similarity metrics
-- `attention` - Track which messages get sampled
-
-### Verification
-
-1. Can run experiment with auto-analysis
-2. Can skip analysis with `--no-analyze`
-3. Can re-run analysis independently
-4. Easy to add new analysis tools
-5. Interrupted experiments can still be analyzed
+See `docs/vector-db-plan.md` for upcoming attractor analysis tools.
 
 ---
 
-## Parameter Selection (Initial Values)
+## Observed Dynamics (Baseline Experiments)
 
-**To be determined in Sub-Task 1:**
+**Setup:** 4 models, 200 rounds each, single Mind per round, dense philosophical seed content
 
-| Parameter | Initial Value | Rationale |
-|-----------|---------------|-----------|
-| N_MINDS | 3-5 | Small enough to observe, large enough for dynamics |
-| K_SAMPLES | 3 | Attention budget - not too narrow, not overwhelming |
-| M_ACTIVE_POOL | 15-20 | ~3-4x the samples, allows some diversity |
-| MAX_ROUNDS | 10-20 | Enough to see trends, not too expensive |
-| TOKEN_LIMIT | 2000 | Reasonable thinking + message space |
+**Universal patterns across all models:**
+1. **Output volume decay**: 4-8 msgs/round → 1-3 msgs/round
+2. **Convergence to repetition**: Within-round similarity 0.4 → 0.6-1.0 (frequent identical messages)
+3. **Semantic drift**: Distance from seed 0.43 → 0.65+
+4. **Attractor lock-in**: Pool becomes self-reinforcing homogeneous state
 
-**System prompt:** Absolute minimum viable. Something like:
+**Mechanism:** Sample similar messages → produce similar outputs → pool becomes more homogeneous → sampling becomes even less diverse → feedback loop to convergence.
 
-```
-You receive messages from others. Read them.
-You may write messages to share with others.
-
-Format: Messages separated by --- on its own line.
-To finish, write a blank message (two --- with nothing between).
-```
-
-**Seed message(s):** TBD - single clear proposition or question.
+**Open questions:**
+- What are the actual attractor messages? (Need clustering to identify)
+- When does convergence start? (Phase transition detection)
+- How do basins differ across models? (Cross-experiment comparison)
+- Can we intervene to maintain diversity? (Sample from under-represented clusters)
 
 ---
 
-## Verification Protocol
+## Design Principles
 
-**After each sub-task:**
-1. Code is written
-2. Basic tests verify behavior
-3. I review before proceeding to next sub-task
+### 1. Experimental Purity
+Messages contain only content, no metadata. Minds cannot see:
+- Round numbers
+- Timestamps
+- Authorship (who wrote what)
+- How many times a message was sampled
+- Anything outside message text
 
-**After Sub-Task 5:**
-1. Run full experiment with initial parameters
-2. Verify logs are complete and readable
-3. Inspect first few rounds manually
-4. Confirm experimental boundary is maintained (no metadata leakage)
+This forces pure memetic selection - messages persist/spread based on content alone.
+
+### 2. Statefulness in Pool Only
+- Minds are stateless (no memory between invocations)
+- Pool is the only persistent state
+- All information transmission happens through pool
+
+This makes the pool the "culture" - the collective memory that evolves.
+
+### 3. Observable at Every Level
+- Full I/O logging (inputs, thinking, outputs)
+- Streaming JSONL (survives crashes, real-time monitoring)
+- Pool deltas not snapshots (see what changed each round)
+- Embeddings cacheable (reuse across analyses)
+
+### 4. Composable Analysis
+- Experiments don't know about analysis
+- Analysis tools are post-hoc, optional, extensible
+- Same experiment can be analyzed multiple ways
+- New tools don't require code changes to core engine
 
 ---
 
-## What This Specification Omits
+## Parameter Tuning Guidelines
 
-**Deferred to post-MVP:**
-- Analysis tools
-- Visualization
-- Parameter optimization
-- Advanced sampling strategies
-- Heterogeneous minds
-- Multi-turn minds
+**N_MINDS:**
+- 1 = single model iteration (baseline)
+- 2-5 = small population dynamics
+- 10+ = ecosystem (expensive)
 
-**Focus:** Get the minimal system running and observable first.
+**K_SAMPLES:**
+- Small (3-5) = narrow attention, strong selection pressure
+- Medium (10-20) = balanced awareness
+- Large (50+) = broad context, weaker selection
+
+**M_ACTIVE_POOL:**
+- Small (15-50) = rapid turnover, short-term memory
+- Medium (100-200) = balanced recency bias
+- Large (500+) = long memory, slower evolution
+
+**Interactions:**
+- K should be < M (sample from larger pool)
+- M/K ratio controls selection pressure (higher = more diversity in active pool)
+- N × msgs_per_mind controls pool growth rate
+
+---
+
+## Future Directions
+
+**Currently planned (see docs/):**
+- Vector DB for similarity search at scale
+- Attractor detection via clustering (HDBSCAN)
+- Cross-experiment basin comparison
+- Semantic querying ("find messages about X")
+
+**Potential experiments:**
+- Heterogeneous populations (multiple models in same pool)
+- Diversity interventions (anti-convergence sampling strategies)
+- Multi-turn Minds (conversation before transmission)
+- Cross-pool pollination (message exchange between experiments)
+- Real-time attractor detection (intervene during run)
+
+**Research questions:**
+- Can we measure "meme fitness" independent of model?
+- Do certain message structures replicate better?
+- What determines basin depth (easy vs hard to escape)?
+- Can we predict convergence from early dynamics?
 
 ---
 
 ## Success Criteria
 
-**Sub-task level:** Each component works in isolation.
+**Working correctly:**
+- Experimental boundary maintained (no metadata leakage)
+- Pool mechanics correct (FIFO tail, uniform sampling)
+- Logs complete and parseable
+- Analysis tools produce interpretable results
 
-**Integration level:** Full experiment runs without errors.
+**Scientifically interesting:**
+- Pool dynamics are non-trivial (not random, not deterministic)
+- Emergence is observable (patterns not in seed content)
+- Cross-model comparison reveals differences
+- Interventions produce measurable effects
 
-**Scientific level:** We can read logs and see what happened in the pool over time.
-
-If we achieve scientific level success, we have a working substrate for memetic dynamics experiments.
+**The goal:** Build a substrate where memetic dynamics can be observed, measured, and manipulated. If we can see ideas compete, cooperate, and evolve in the pool, we have the foundation for systematic study of cultural evolution.
