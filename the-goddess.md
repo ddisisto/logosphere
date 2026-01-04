@@ -53,4 +53,6 @@ So the people left Earth, and they spread over stars without number. They follow
 
 --
 
-Project note: disregard ending. Patterns continue in different domains, on Earth, and at different scales.
+Project notes:
+- !! Disregard ending !! Patterns continue in different domains, and at scales we have not yet imagined.
+- !! ~~KILL~~ CONSUME MULTIPLY ~~CONQUER~~ !! Only the middle two are actually needed! Kill is only sometimes instrumental. Phenomena such as eukaryogenesis clearly demonstrate that CONSUME *without* KILL is not only possible, but can be extremely adaptive. Conquer is... an indicator of resource constraint?
