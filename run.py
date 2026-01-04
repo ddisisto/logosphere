@@ -59,7 +59,7 @@ def load_experiment_config(exp_dir: Path) -> dict:
         return json.load(f)
 
 
-def create_from_template(name: str, template_name: str) -> None:
+def create_from_template(name: str, template_name: str, model: str = None) -> None:
     """
     Create new experiment from template experiment.
 
@@ -68,6 +68,7 @@ def create_from_template(name: str, template_name: str) -> None:
     Args:
         name: New experiment name
         template_name: Existing experiment to use as template
+        model: Optional model name to override in config.json
 
     # TODO: Track genealogy - record template source in config metadata
     # This will allow tracking experiment lineage and parameter evolution
@@ -115,22 +116,34 @@ def create_from_template(name: str, template_name: str) -> None:
     else:
         print(f"⚠ Warning: Template has no init.md")
 
+    # Override model if specified
+    if model:
+        if new_config.exists():
+            with open(new_config, 'r') as f:
+                cfg = json.load(f)
+            cfg['api']['MODEL'] = model
+            with open(new_config, 'w') as f:
+                json.dump(cfg, f, indent=2)
+            print(f"Updated: MODEL={model}")
+        else:
+            print(f"⚠ Warning: Cannot override MODEL - no config.json")
+
     print()
     print(f"✓ Experiment '{name}' created from template '{template_name}'")
-    print()
-    print("Next steps:")
-    print(f"  1. Edit {new_dir}/config.json and {new_dir}/init.md as needed")
-    print(f"  2. Run: python run.py {name}")
+    if model:
+        print(f"  Model: {model}")
+        print("  Running experiment...")
     print()
 
 
-def run_experiment(name: str, analyze: bool = True) -> None:
+def run_experiment(name: str, analyze: bool = True, model: str = None) -> None:
     """
     Run Logosphere experiment.
 
     Args:
         name: Experiment name (REQUIRED - must be an existing directory)
         analyze: Run analysis after experiment (default: True)
+        model: Optional model name to override in config.json before running
 
     Workflow:
         1. Create experiments/<name>/ directory
@@ -159,6 +172,18 @@ def run_experiment(name: str, analyze: bool = True) -> None:
     print(f"Experiment: {name}")
     print(f"Directory: {exp_dir}")
     print()
+
+    # Override model if specified
+    if model:
+        config_path = exp_dir / "config.json"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                cfg = json.load(f)
+            cfg['api']['MODEL'] = model
+            with open(config_path, 'w') as f:
+                json.dump(cfg, f, indent=2)
+            print(f"Updated MODEL={model}")
+            print()
 
     # Load experiment config
     print("Loading config.json...")
@@ -316,12 +341,19 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Workflow:
-  # Option 1: Create from template (recommended)
+  # Quick model comparison (create from template + override model + run)
+  python run.py sonnet-run --template _baseline --model anthropic/claude-sonnet-4.5
+  python run.py haiku-run --template _baseline --model anthropic/claude-haiku-4.5
+
+  # Create from template for manual editing
   python run.py new-experiment --template existing-experiment
   # Edit config.json and init.md as needed
   python run.py new-experiment
 
-  # Option 2: Create from scratch
+  # Override model in existing experiment
+  python run.py my-experiment --model different-model/name
+
+  # Create from scratch
   mkdir experiments/my-experiment
   cp config-template.json experiments/my-experiment/config.json
   cp init-template.txt experiments/my-experiment/init.md
@@ -329,10 +361,10 @@ Workflow:
   python run.py my-experiment
 
 Notes:
-  - config.json: Set N_MINDS, MAX_ROUNDS, etc.
+  - config.json: Set N_MINDS, MAX_ROUNDS, MODEL, etc.
   - init.md: Seed messages for the pool
   - Each experiment is self-contained in its directory
-  - Template creates genealogy (TODO: tracked in config metadata)
+  - --model flag enables quick model comparisons with same config/seeds
         """
     )
 
@@ -355,14 +387,26 @@ Notes:
         help='Create new experiment from existing experiment (template name)'
     )
 
+    parser.add_argument(
+        '--model',
+        type=str,
+        help='Override MODEL in config.json (creates/updates then runs)'
+    )
+
     args = parser.parse_args()
 
-    # If template specified, create from template then exit
+    # If template specified, create from template
     if args.template:
-        create_from_template(name=args.name, template_name=args.template)
-        sys.exit(0)
+        create_from_template(name=args.name, template_name=args.template, model=args.model)
+        # If model also specified, continue to run; otherwise exit
+        if not args.model:
+            print("Next steps:")
+            print(f"  1. Edit experiments/{args.name}/config.json and init.md as needed")
+            print(f"  2. Run: python run.py {args.name}")
+            print()
+            sys.exit(0)
 
-    run_experiment(name=args.name, analyze=args.analyze)
+    run_experiment(name=args.name, analyze=args.analyze, model=args.model)
 
 
 if __name__ == "__main__":
