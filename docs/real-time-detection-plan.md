@@ -11,6 +11,47 @@ Integrate real-time embedding generation, vector storage, and attractor detectio
 - Parallel analysis: load VectorDB while experiment runs
 - Cluster only **active pool (M messages)** for constant O(M) performance
 
+## Implementation Strategy: Hybrid Validation Approach
+
+**Decision: All-in on unified VectorDB architecture with validation checkpoints**
+
+Rather than building parallel systems (post-hoc VectorStore + runtime Pool), we're implementing the complete VectorDB replacement immediately. This reduces technical debt and establishes proper foundations while the project is still early.
+
+**Risk mitigation through staged validation:**
+
+1. **Build VectorDB with dual-mode support**
+   - Runtime mode: `add(text, embedding, ...)` for live experiments
+   - Post-hoc mode: `load_from_embeddings(npz_file, jsonl_logs)` for existing data
+
+2. **Validate on baseline experiments BEFORE orchestrator integration**
+   - Load existing .npz embeddings into VectorDB
+   - Run clustering on 4 baseline experiments
+   - Verify attractors are semantically coherent
+   - Tune HDBSCAN parameters with real data
+
+3. **Build supporting components in isolation**
+   - EmbeddingClient (unit test with mocks)
+   - AttractorDetector (validate on baseline VectorDBs)
+   - Interventions (NoIntervention only for Phase 1)
+
+4. **Integration testing before production**
+   - Minimal 2-round experiment with embeddings enabled
+   - Verify clean abort on API failure
+   - Check attractor_detected events in logs
+
+5. **Orchestrator refactoring last**
+   - Replace Pool with validated VectorDB
+   - All components proven to work independently
+
+**Validation gates (must pass before proceeding):**
+- ✅ VectorDB loads baseline embeddings correctly
+- ✅ Clustering produces interpretable attractor messages
+- ✅ Active pool tracking maintains correct FIFO window
+- ✅ Search and sampling return expected results
+- ✅ 2-round test experiment completes successfully
+
+---
+
 ## Scope: Phase 1 - Detection Infrastructure Only
 
 **What we're building:**
@@ -571,18 +612,70 @@ pip install faiss-cpu hdbscan requests numpy
 - Run baseline experiment with real-time infrastructure
 - Compare attractor clusters to post-hoc analysis (should match for active pool)
 
-## Implementation Order
+## Implementation Order (Hybrid Validation)
 
-1. **VectorDB** (core data structure, depends on FAISS)
-2. **EmbeddingClient** (standalone, test with mocks)
-3. **AttractorDetector** (depends on VectorDB + HDBSCAN)
-4. **Interventions base** (NoIntervention only)
-5. **Modify Logger** (new event methods for vector IDs)
-6. **Modify Orchestrator** (replace Pool with VectorDB, integrate components)
-7. **Extend config.py** (add defaults, per-experiment loading)
-8. **Integration test** (minimal 2-round experiment)
-9. **Validation** (reproduce baseline with real-time infrastructure)
-10. **Deprecate Pool** (mark as legacy, keep for old experiments)
+**Phase A: Core Components + Baseline Validation**
+1. **VectorDB** (`src/core/vector_db.py`)
+   - Build with dual-mode support (runtime + post-hoc)
+   - Implement FAISS indexing, active pool tracking, sampling
+   - Add `load_from_embeddings()` for existing .npz files
+
+2. **Validate on Baseline Data** (scripts/validate_vector_db.py)
+   - Load 4 baseline experiments from existing .npz + JSONL
+   - Test active pool tracking, sampling, search
+   - **Validation gate**: VectorDB handles existing data correctly
+
+3. **AttractorDetector** (`src/analysis/attractors.py`)
+   - HDBSCAN clustering on active pool embeddings
+   - Representative message extraction
+   - Temporal tracking
+
+4. **Baseline Attractor Analysis** (scripts/analyze_baseline_attractors.py)
+   - Cluster all 4 baseline experiments
+   - Extract representative messages per cluster
+   - Tune HDBSCAN parameters (min_cluster_size, etc.)
+   - **Validation gate**: Attractors are semantically coherent
+
+**Phase B: Runtime Components**
+5. **EmbeddingClient** (`src/core/embedding_client.py`)
+   - OpenRouter API wrapper
+   - Batch embedding with abort-on-failure
+   - Unit tests with mocks
+
+6. **Interventions Base** (`src/core/interventions.py`)
+   - Abstract base class with hooks
+   - NoIntervention implementation only
+
+**Phase C: Integration**
+7. **Modify Logger** (`src/core/logger.py`)
+   - New event methods (vector IDs, attractor_state, thinking)
+   - Update existing methods to reference IDs
+
+8. **Extend Config** (`src/config.py`)
+   - Add embedding, attractor, intervention defaults
+   - Per-experiment config loading
+
+9. **Integration Test** (scripts/test_realtime_experiment.py)
+   - Minimal 2-round experiment with real API calls
+   - Verify embedding batch, clustering, logging
+   - Test clean abort on API failure
+   - **Validation gate**: End-to-end flow works
+
+**Phase D: Orchestrator Refactoring**
+10. **Modify Orchestrator** (`src/core/orchestrator.py`)
+    - Replace Pool with VectorDB
+    - Integrate EmbeddingClient, AttractorDetector, Interventions
+    - Add intervention hooks
+    - Handle abort scenarios
+
+11. **Deprecate Pool** (`src/core/pool.py`)
+    - Add deprecation warning
+    - Keep for backward compatibility with old experiments
+
+12. **Full Validation** (scripts/run_validation_experiment.py)
+    - Run 10-round experiment with real-time detection
+    - Compare results to baseline mechanics
+    - Verify logs, VectorDB persistence, attractors
 
 ## Success Criteria
 
