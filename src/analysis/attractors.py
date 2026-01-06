@@ -15,7 +15,7 @@ try:
 except ImportError:
     HDBSCAN_AVAILABLE = False
 
-from core.vector_db import VectorDB
+from ..core.vector_db import VectorDB
 
 
 class AttractorDetector:

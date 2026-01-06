@@ -26,12 +26,15 @@ This boundary is what makes memetic dynamics observable - the system evolves bas
 logosphere/
 ├── src/
 │   ├── core/              # Experiment engine
-│   │   ├── pool.py        # Message storage and sampling
+│   │   ├── vector_db.py   # Message storage with embeddings (replaces Pool)
+│   │   ├── embedding_client.py # OpenRouter embedding API
+│   │   ├── interventions.py # Sampling strategy hooks
 │   │   ├── mind.py        # API invocation and parsing
 │   │   ├── orchestrator.py # Main loop, coordination
 │   │   ├── logger.py      # Structured logging
 │   │   └── init_parser.py # Seed message parsing
-│   ├── analysis/          # Analysis tools (embeddings, vector DB, attractors)
+│   ├── analysis/          # Analysis tools
+│   │   └── attractors.py  # HDBSCAN clustering for attractor detection
 │   └── config.py          # Parameters and system prompt
 ├── scripts/
 │   ├── run.py             # Experiment entry point
@@ -41,7 +44,8 @@ logosphere/
     └── <name>/
         ├── init.md        # Seed messages
         ├── config.json    # Parameter snapshot
-        └── logs/          # JSONL event stream
+        ├── logs/          # JSONL event stream
+        └── vector_db/     # Embeddings + metadata (new)
 ```
 
 ---
@@ -62,21 +66,25 @@ Run tests: `pytest`
 
 ## Core Mechanics
 
-### Pool (src/core/pool.py)
+### VectorDB (src/core/vector_db.py)
 
-Message storage with FIFO active window:
+Message storage with embeddings and FIFO active window:
 
-- **History**: All messages ever added (append-only)
+- **History**: All messages ever added (append-only) with embeddings
 - **Active Pool**: Tail M messages (sampling window)
-- **Sampling**: Uniform random from active pool only
+- **Sampling**: Uniform random from active pool (or weighted via interventions)
+- **Search**: Similarity search via embeddings
 
 ```python
-pool = Pool(max_active=200)
-pool.add_message(msg)           # Append to history
-sample = pool.sample(k=10)      # Sample from tail M
+vector_db = VectorDB(active_pool_size=200)
+vid = vector_db.add(text=msg, embedding=emb, round_num=1, mind_id=0)
+sample = vector_db.sample_random(k=10)      # Sample from tail M
+similar = vector_db.search_similar(query_emb, k=5)  # Semantic search
 ```
 
-**Why tail sampling?** Creates recency bias without explicit timestamps. Recent messages more likely to be sampled, but old messages eventually fall out of active window. This is how "forgetting" happens in the pool.
+**Why tail sampling?** Creates recency bias without explicit timestamps. Recent messages more likely to be sampled, but old messages eventually fall out of active window. This is how "forgetting" happens.
+
+**Why embeddings?** Enables real-time attractor detection (clustering), semantic search, and future intervention strategies (e.g., diversity-weighted sampling).
 
 ### Mind (src/core/mind.py)
 
@@ -100,24 +108,31 @@ result = invoke_mind(
 
 ### Orchestrator (src/core/orchestrator.py)
 
-Coordinates rounds:
+Coordinates rounds with real-time detection:
 
-1. Sample K messages from pool
+1. Sample K messages from VectorDB (via intervention hook)
 2. Invoke Mind with sample
 3. Parse output (thinking vs transmitted)
-4. Add transmitted messages to pool
-5. Log everything
-6. Repeat for N minds per round
+4. Batch embed all transmitted messages
+5. Add to VectorDB with embeddings
+6. Detect attractors (cluster active pool)
+7. Notify intervention of attractor state
+8. Log everything
+9. Repeat for N minds per round
 
-**Sequential invocation:** Minds within a round see pool state as it evolves. Mind 0 adds messages that Mind 1 might sample.
+**Sequential invocation:** Minds within a round see VectorDB state as it evolves. Mind 0 adds messages that Mind 1 might sample.
+
+**Abort on failure:** Embedding API errors trigger ExperimentAbortError for clean failure (partial results preserved).
 
 ### Logging (src/core/logger.py)
 
 JSONL event stream:
 
 - `experiment_start` - config, seed count
-- `round_start` - pool state
+- `round_start` - VectorDB state (total size, active pool size)
 - `mind_invocation` - full I/O (input sample, thinking, transmitted, tokens)
+- `embedding_batch` - embedding latency, model
+- `attractor_state` - cluster count, sizes, coherence, representatives
 - `round_end` - pool delta
 - `experiment_end` - summary stats
 

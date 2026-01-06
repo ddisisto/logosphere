@@ -8,7 +8,7 @@ import numpy as np
 import requests
 from typing import Optional
 
-from config import API_KEY, API_BASE_URL
+from ..config import API_KEY, API_BASE_URL
 
 
 class EmbeddingAPIError(Exception):

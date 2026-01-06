@@ -19,15 +19,15 @@ import time
 import shutil
 from pathlib import Path
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.vector_db import VectorDB
-from core.embedding_client import EmbeddingClient, EmbeddingAPIError
-from core.interventions import create_intervention
-from core.logger import Logger
-from analysis.attractors import AttractorDetector
-from config import (
+from src.core.vector_db import VectorDB
+from src.core.embedding_client import EmbeddingClient, EmbeddingAPIError
+from src.core.interventions import create_intervention
+from src.core.logger import Logger
+from src.analysis.attractors import AttractorDetector
+from src.config import (
     EXPERIMENTS_DIR,
     DEFAULT_EMBEDDING_CONFIG,
     DEFAULT_ATTRACTOR_CONFIG,

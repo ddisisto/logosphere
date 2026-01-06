@@ -662,21 +662,23 @@ faiss-cpu or hnswlib - the VectorDB interface is designed for drop-in replacemen
    - Verified: VectorDB, EmbeddingClient, AttractorDetector, Logger
    - All events logged correctly, save/load roundtrip works
 
-**Phase D: Orchestrator Refactoring** ← CURRENT
-10. 🔄 **Modify Orchestrator** (`src/core/orchestrator.py`)
-    - Replace Pool with VectorDB
-    - Integrate EmbeddingClient, AttractorDetector, Interventions
-    - Add intervention hooks
-    - Handle abort scenarios
+**Phase D: Orchestrator Refactoring** ✅
+10. ✅ **Modify Orchestrator** (`src/core/orchestrator.py`)
+    - Replaced Pool with VectorDB
+    - Integrated EmbeddingClient, AttractorDetector, Interventions
+    - Added intervention hooks (on_sample, on_round_start, on_round_end)
+    - ExperimentAbortError on embedding failure
 
-11. **Deprecate Pool** (`src/core/pool.py`)
-    - Add deprecation warning
-    - Keep for backward compatibility with old experiments
+11. ✅ **Delete Pool** (`src/core/pool.py`)
+    - DELETED entirely (no backward compat, per design principle)
+    - VectorDB is the single source of truth
+    - Old code importing Pool gets ImportError (signal to update)
 
-12. **Full Validation** (scripts/run_validation_experiment.py)
-    - Run 10-round experiment with real-time detection
-    - Compare results to baseline mechanics
-    - Verify logs, VectorDB persistence, attractors
+12. ✅ **Full Validation** (`scripts/run_validation_experiment.py`)
+    - 10-round experiment with real LLM + embeddings + attractor detection
+    - All logging events present (embedding_batch, attractor_state, etc.)
+    - VectorDB save/load roundtrip verified
+    - Validation passed 2026-01-06
 
 ## Success Criteria
 
@@ -684,12 +686,12 @@ faiss-cpu or hnswlib - the VectorDB interface is designed for drop-in replacemen
 - ✅ VectorDB replaces Pool as single source of truth
 - ✅ Experiments can run with real-time embeddings enabled
 - ✅ Attractor detection runs every round on active pool (constant ~200ms)
-- ✅ Logs show attractor_detected events with cluster summaries
+- ✅ Logs show attractor_state events with cluster summaries
 - ✅ VectorDB persists to disk (incremental or at end)
 - ✅ Post-hoc analysis can load VectorDB and query messages
-- ✅ Experiment aborts cleanly on embedding failure
+- ✅ Experiment aborts cleanly on embedding failure (ExperimentAbortError)
 - ✅ Intervention hooks exist (even if NoIntervention is used)
-- ✅ Backward compatible: old experiments can still use Pool (deprecated)
+- ~~Backward compatible: old experiments can still use Pool~~ → Pool deleted, no backward compat
 
 **NOT required for Phase 1:**
 - ❌ Concrete intervention strategies (Phase 2)
