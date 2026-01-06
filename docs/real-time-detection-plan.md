@@ -588,11 +588,15 @@ experiments/<name>/
 
 **New Python packages:**
 ```bash
-pip install faiss-cpu hdbscan requests numpy
+pip install hdbscan  # Only new dep needed
 ```
 
-**Already have:**
-- numpy, scikit-learn, matplotlib (from current analysis tools)
+**Already have (via `uv sync --extra analysis`):**
+- numpy, scikit-learn, matplotlib
+
+**Scaling note:** VectorDB uses sklearn's NearestNeighbors (brute-force cosine) which is
+sufficient for M=200 active pool (~10ms search). If scaling to 10k+ vectors, swap to
+faiss-cpu or hnswlib - the VectorDB interface is designed for drop-in replacement.
 
 ## Testing Strategy
 
