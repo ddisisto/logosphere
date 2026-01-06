@@ -2,11 +2,13 @@
 .env
 
 # Python
+.venv/
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+*.egg-info/
 
 # Logs and output
 logs/
@@ -19,6 +21,7 @@ output/
 .idea/
 *.swp
 *.swo
+.claude/
 
 # OS
 .DS_Store
