@@ -648,23 +648,22 @@ faiss-cpu or hnswlib - the VectorDB interface is designed for drop-in replacemen
    - NoIntervention implementation (baseline sampling)
    - Registry + factory for future intervention strategies
 
-**Phase C: Integration** ← CURRENT
-7. 🔄 **Modify Logger** (`src/core/logger.py`)
-   - New event methods (vector IDs, attractor_state, thinking)
-   - Update existing methods to reference IDs
+**Phase C: Integration** ✅
+7. ✅ **Modify Logger** (`src/core/logger.py`)
+   - New: log_attractor_state, log_embedding_batch, log_error
+   - Added optional vector_ids to log_round_end
 
-8. **Extend Config** (`src/config.py`)
-   - Add embedding, attractor, intervention defaults
-   - Per-experiment config loading
+8. ✅ **Extend Config** (`src/config.py`)
+   - Added DEFAULT_EMBEDDING/ATTRACTOR/INTERVENTION_CONFIG
+   - Added load_experiment_config() for merging defaults
 
-9. **Integration Test** (scripts/test_realtime_experiment.py)
-   - Minimal 2-round experiment with real API calls
-   - Verify embedding batch, clustering, logging
-   - Test clean abort on API failure
-   - **Validation gate**: End-to-end flow works
+9. ✅ **Integration Test** (`scripts/test_realtime.py`)
+   - 2-round test with real API embedding calls
+   - Verified: VectorDB, EmbeddingClient, AttractorDetector, Logger
+   - All events logged correctly, save/load roundtrip works
 
-**Phase D: Orchestrator Refactoring**
-10. **Modify Orchestrator** (`src/core/orchestrator.py`)
+**Phase D: Orchestrator Refactoring** ← CURRENT
+10. 🔄 **Modify Orchestrator** (`src/core/orchestrator.py`)
     - Replace Pool with VectorDB
     - Integrate EmbeddingClient, AttractorDetector, Interventions
     - Add intervention hooks
