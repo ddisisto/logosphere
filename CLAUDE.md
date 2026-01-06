@@ -46,6 +46,20 @@ logosphere/
 
 ---
 
+## Development Setup
+
+```bash
+uv sync                      # Install core dependencies
+uv sync --extra analysis     # Add analysis tools (numpy, sklearn, matplotlib)
+uv sync --extra dev          # Add dev tools (pytest)
+```
+
+Run experiments: `python scripts/run.py <experiment_name>`
+Run analysis: `python scripts/analyze.py <experiment_name> --tool <tool>`
+Run tests: `pytest`
+
+---
+
 ## Core Mechanics
 
 ### Pool (src/core/pool.py)
