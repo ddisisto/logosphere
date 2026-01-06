@@ -2,10 +2,11 @@
 """
 Run the working memory reasoner on a problem.
 
+No protocols. Pool state = output. Termination is dynamics-based.
+
 Usage:
     python scripts/run_reasoner.py "What is 23 + 47?"
-    python scripts/run_reasoner.py --problem "Solve step by step: 15 * 7 + 12"
-    python scripts/run_reasoner.py --verbose --max-iterations 20 "problem here"
+    python scripts/run_reasoner.py --max-iterations 20 "problem here"
 """
 
 import argparse
@@ -51,6 +52,12 @@ def main():
         help="Working memory capacity (default: 50)"
     )
     parser.add_argument(
+        "--convergence-threshold",
+        type=float,
+        default=0.75,
+        help="Coherence threshold for convergence (default: 0.75)"
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         default=True,
@@ -81,6 +88,7 @@ def main():
         max_iterations=args.max_iterations,
         k_samples=args.k_samples,
         active_pool_size=args.pool_size,
+        convergence_threshold=args.convergence_threshold,
         verbose=not args.quiet,
         output_dir=args.output_dir
     )
@@ -90,6 +98,7 @@ def main():
 
     print("=" * 60)
     print("WORKING MEMORY REASONER")
+    print("Pool state = output. No protocols.")
     print("=" * 60)
 
     result = reasoner.solve(problem)
@@ -97,11 +106,25 @@ def main():
     print("\n" + "=" * 60)
     print("RESULT")
     print("=" * 60)
-    print(f"Answer: {result.answer}")
-    print(f"Iterations: {result.iterations}")
     print(f"Termination: {result.termination_reason}")
+    print(f"Iterations: {result.iterations}")
     print(f"Total thoughts: {result.total_thoughts}")
     print(f"Final pool size: {result.final_pool_size}")
+    print(f"Clusters: {result.cluster_count}")
+    print(f"Final coherence: {result.final_coherence:.3f}")
+
+    print("\n--- Dominant cluster representatives ---")
+    for i, text in enumerate(result.dominant_cluster_texts, 1):
+        preview = text[:100] + "..." if len(text) > 100 else text
+        print(f"{i}. {preview}")
+
+    # Print metrics trajectory if verbose
+    if not args.quiet and result.metrics_history:
+        print("\n--- Metrics trajectory ---")
+        print("iter  clusters  coherence  diversity  share")
+        for m in result.metrics_history:
+            print(f"{m.iteration:4d}  {m.num_clusters:8d}  {m.coherence:9.3f}  "
+                  f"{m.diversity:9.3f}  {m.dominant_cluster_share:.3f}")
 
     if args.output_dir:
         print(f"\nSaved to: {args.output_dir}")

@@ -4,12 +4,16 @@
 
 ---
 
-## Core Insight
+## Core Philosophy
 
-Standard reasoning: sequential trace accumulation (chain-of-thought)
-This project: **parallel thought ecology** with selection dynamics
+**No explicit protocols.** The pool state *is* the output.
 
-The reasoning isn't in the generation - it's in the pool. Thoughts compete for attention. Persistence requires transmission. Forgetting is feature, not bug.
+- No `[ANSWER]` tags - memes don't need to declare themselves answers
+- No hardcoded marker weights - if `[IMPORTANT]` helps, it wins by replication
+- Termination is dynamics-based, not protocol-based
+- We measure and steer the pool, not the answers
+
+The reasoning isn't in the generation - it's in the pool. Thoughts compete for attention. Persistence requires transmission. What survives is what fit the selection pressure.
 
 ---
 
@@ -20,408 +24,172 @@ The reasoning isn't in the generation - it's in the pool. Thoughts compete for a
 │                    REASONING LOOP                        │
 │  while not terminated:                                   │
 │    1. Sample K thoughts from pool                        │
-│    2. Generate response (thinking + transmissions)       │
-│    3. Add transmissions to pool                          │
-│    4. Check termination conditions                       │
+│    2. Model thinks, transmits (no protocol)              │
+│    3. Embed, add to pool                                 │
+│    4. Measure: diversity, clusters, stability            │
+│    5. Check termination (dynamics only)                  │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
                     ┌───────────┐
-                    │   POOL    │  ← working memory
+                    │   POOL    │  ← working memory (VectorDB)
                     │  (FIFO)   │  ← tail M active
                     └───────────┘
                           │
                           ▼
-                    ┌───────────┐
-                    │  OUTPUT   │  ← final answer extraction
-                    └───────────┘
+              ┌───────────────────────┐
+              │   POOL STATE = OUTPUT │
+              │   Sample from dominant │
+              │   cluster or return    │
+              │   trajectory           │
+              └───────────────────────┘
 ```
 
 ---
 
-## Phase 1: Minimal Viable Reasoner
+## Termination Conditions (Dynamics Only)
 
-**Goal:** Single-problem reasoning with pool-based working memory
+No explicit signals. Terminate based on pool state:
 
-### 1.1 Core Components
+| Condition | Detection | Output |
+|-----------|-----------|--------|
+| **Converged** | Single cluster > 50% pool, coherence > 0.75 | Sample from dominant cluster |
+| **Multi-stable** | Multiple distinct clusters, stable for N iterations | Return cluster representatives |
+| **Chaotic/Timeout** | Max iterations, no stability | Return trajectory for analysis |
+| **Early monoculture** | Pool homogeneous within few iterations | Could have one-shot; note this |
 
-Reuse from Logosphere:
-- `vector_db.py` - replaces Pool (Pool deleted as of Phase D)
-- `mind.py` - minor modifications for reasoning context
-- `logger.py` - unchanged
+---
 
-New:
-- `reasoner.py` - reasoning loop orchestration
-- `problem.py` - problem specification and answer extraction
+## Metrics (Per Iteration)
 
-### 1.2 Reasoner Loop
+Track these to understand and steer dynamics:
 
 ```python
-class Reasoner:
-    def __init__(self, pool: Pool, config: ReasonerConfig):
-        self.pool = pool
-        self.config = config
-        self.iterations = 0
-        
-    def solve(self, problem: str, max_iterations: int = 50) -> str:
-        """
-        Run reasoning loop until termination.
-        
-        Returns extracted answer.
-        """
-        # Seed pool with problem
-        self.pool.add_message(f"[PROBLEM] {problem}")
-        
-        while self.iterations < max_iterations:
-            # Sample K thoughts
-            thoughts = self.pool.sample(self.config.k_samples)
-            
-            # Invoke mind
-            result = invoke_mind(
-                system_prompt=REASONER_SYSTEM_PROMPT,
-                messages=thoughts,
-                token_limit=self.config.token_limit
-            )
-            
-            # Add transmissions to pool
-            for msg in result['transmitted']:
-                self.pool.add_message(msg)
-            
-            # Check for answer
-            answer = self.extract_answer(result['transmitted'])
-            if answer:
-                return answer
-                
-            self.iterations += 1
-        
-        # Max iterations - extract best answer from pool
-        return self.extract_final_answer()
+metrics = {
+    'diversity': mean_pairwise_distance(active_pool),  # Higher = more diverse
+    'num_clusters': len(attractor_state['clusters']),
+    'dominant_cluster_share': largest_cluster_size / pool_size,
+    'coherence': dominant_cluster['coherence'],  # Intra-cluster similarity
+    'stability': clusters_unchanged_for_n_iterations,
+    'drift': distance_from_seed_centroid,  # How far from starting point
+}
 ```
 
-### 1.3 System Prompt (Draft)
+---
+
+## System Prompt (Minimal)
+
+No protocol instructions. Just framing:
 
 ```
-You are reasoning through a problem. You receive thoughts from your working memory.
+You receive thoughts from a shared pool.
 
-Read the thoughts. Think privately. Then transmit thoughts back to working memory.
+Read them. Think privately. Transmit thoughts worth keeping.
 
-Transmitted thoughts persist and may be sampled again. Thoughts not transmitted are forgotten.
-
-When you have an answer, transmit: [ANSWER] your answer here
+Transmitted thoughts persist and compete for attention.
+Thoughts not transmitted are forgotten.
 
 Format: Thoughts separated by --- on its own line.
 ```
 
-### 1.4 Termination Conditions
-
-- Explicit: `[ANSWER]` tag detected in transmission
-- Implicit: Convergence detection (same answer transmitted N times)
-- Fallback: Max iterations reached → extract from pool
-
-### 1.5 Deliverables
-
-- [ ] `reasoner.py` - core loop
-- [ ] `problem.py` - problem loading, answer extraction
-- [ ] `config_reasoner.py` - reasoner-specific config
-- [ ] `test_reasoner.py` - basic functionality tests
-- [ ] `run_reasoner.py` - entry point
+That's it. No "when you have an answer", no "tag important things". Let structure emerge.
 
 ---
 
-## Phase 2: Emergent Markers
+## Interventions (Steering Dynamics)
 
-**Goal:** Observe and enable emergent prioritization
+Interventions operate on the *pool*, not on *protocols*:
 
-### 2.1 Hypothesis
+| Intervention | What It Does |
+|--------------|--------------|
+| **Mask attractors** | Exclude messages from known-bad clusters when sampling |
+| **Inject diversity** | Add seeds from outside current basin |
+| **Annealing** | Vary K (sample size) over iterations - high early, low late |
+| **Counter-context** | Detect drift toward attractor, inject opposing seeds |
+| **Temperature** | Vary randomness in sampling - explore vs exploit |
 
-Without explicit instruction, the system will evolve markers for:
-- Importance: `[IMPORTANT]`, `[KEY]`, `!!!`
-- Uncertainty: `[?]`, `[UNSURE]`, `[CHECK]`
-- Progress: `[STEP 1]`, `[PARTIAL]`, `[BUILDING ON...]`
-- Rejection: `[WRONG]`, `[DISCARD]`, `[SUPERSEDED]`
-
-### 2.2 Observation Infrastructure
-
-Track marker emergence across problems:
-
-```python
-def analyze_markers(pool_history: list[str]) -> dict:
-    """
-    Detect emergent patterns in pool content.
-    
-    Returns:
-        - bracket_tags: [TAG] patterns and frequencies
-        - repetition_patterns: phrases that get re-transmitted
-        - compression_ratio: thought length over iterations
-    """
-```
-
-### 2.3 Optional: Weighted Sampling
-
-If markers emerge, test whether explicit weighting helps:
-
-```python
-def weighted_sample(pool: Pool, k: int, weights: dict) -> list[str]:
-    """
-    Sample with weights based on detected markers.
-    
-    E.g., [IMPORTANT] tagged messages get 2x weight.
-    """
-```
-
-**Key principle:** Let markers emerge first, then optionally amplify. Don't design the vocabulary.
-
-### 2.4 Deliverables
-
-- [ ] `marker_analysis.py` - detect emergent patterns
-- [ ] Logging infrastructure for marker tracking
-- [ ] Optional weighted sampling (off by default)
+These steer dynamics without telling the model what to do.
 
 ---
 
-## Phase 3: Benchmarking
+## Implementation Status
 
-**Goal:** Compare against standard chain-of-thought
+### Done
+- [x] VectorDB (replaces Pool)
+- [x] EmbeddingClient
+- [x] AttractorDetector (HDBSCAN clustering)
+- [x] Basic reasoner loop
+- [x] CLI entry point
 
-### 3.1 Test Problems
+### Now: Philosophy Pivot
+- [ ] Remove `[ANSWER]` detection from reasoner
+- [ ] Dynamics-only termination (convergence, stability, timeout)
+- [ ] Add per-iteration metrics logging
+- [ ] Update system prompt (remove protocol)
+- [ ] Test: run to observe dynamics, not to get answers
 
-Start with problems where parallel exploration helps:
-
-1. **Multi-step math** - where dead ends are common
-2. **Logic puzzles** - constraint satisfaction
-3. **Planning problems** - where branching helps
-4. **Ambiguous problems** - where multiple interpretations compete
-
-### 3.2 Baselines
-
-- Standard CoT (single sequential trace)
-- Self-consistency (multiple CoT, vote on answer)
-- Tree-of-thought (explicit branching)
-
-### 3.3 Metrics
-
-- Accuracy (correct answer rate)
-- Efficiency (tokens to solution)
-- Robustness (variance across runs)
-- Emergence (marker diversity, compression)
-
-### 3.4 Deliverables
-
-- [ ] `benchmark.py` - run comparisons
-- [ ] Problem sets (start small, curated)
-- [ ] Results analysis and visualization
-
----
-
-## Phase 4: Extensions (Deferred)
-
-Ideas to explore after basic system works:
-
-### 4.1 Adaptive Parameters
-
-- K (samples) varies based on pool state
-- M (active pool) grows/shrinks with problem complexity
-- Token limit adapts to reasoning phase
-
-### 4.2 Multi-Scale Pools
-
-Nested pools for different timescales:
-- Fast pool: immediate working memory (small M)
-- Slow pool: persistent insights (large M, slower decay)
-- Meta pool: strategies that work across problems
-
-### 4.3 Collaborative Reasoning
-
-Multiple "minds" reasoning in parallel:
-- Shared pool (Logosphere-style)
-- Different system prompts (critic, generator, checker)
-- Emergent division of labor
-
-### 4.4 Self-Modifying Prompts
-
-The system transmits not just thoughts but prompt modifications:
-- "When sampling, prefer thoughts tagged [VERIFIED]"
-- Pool contains both content and meta-instructions
-
----
-
-## Implementation Order
-
-```
-Week 1: Phase 1 (Minimal Viable Reasoner)
-  Day 1-2: Core loop, reuse Logosphere components
-  Day 3-4: System prompt iteration, termination logic
-  Day 5: Testing on simple problems
-  
-Week 2: Phase 2 (Emergent Markers)
-  Day 1-2: Observation infrastructure
-  Day 3-4: Run experiments, analyze emergence
-  Day 5: Document findings
-  
-Week 3: Phase 3 (Benchmarking)
-  Day 1-2: Baseline implementations
-  Day 3-4: Run comparisons
-  Day 5: Analysis and writeup
-```
+### Later
+- [ ] Intervention implementations (masking, injection, annealing)
+- [ ] Compare: one-shot vs N-iteration pool
+- [ ] Find problems where pool dynamics matter
+- [ ] Small model experiments (cheap iteration)
 
 ---
 
 ## Key Design Decisions
 
-### Pool vs. Context Window
+### Pool State = Output
 
-The pool is NOT the context window. The context window contains:
-- System prompt
-- Sampled thoughts (K messages)
-- Space for generation
+The "answer" is not extracted via protocol. It emerges:
+- Converged pool → sample dominant cluster
+- Multi-stable → return the clusters themselves (interesting!)
+- Chaotic → the trajectory is the data
 
-The pool is external storage that persists across iterations. This is the key architectural difference from standard reasoning.
+### No Marker Vocabulary
 
-### FIFO vs. Other Decay
+Don't design `[IMPORTANT]`, `[DISCARD]`, etc. If markers help, they'll emerge and win by replication. If they don't emerge, they weren't needed.
 
-Start with FIFO (simplest). Could explore:
-- LRU (least recently sampled drops)
-- Importance-weighted decay
-- No decay (pool grows indefinitely, random sample from all)
+Observe what emerges. Analyze post-hoc. Don't prescribe.
 
-FIFO is the null hypothesis. Change only if data suggests otherwise.
+### Dynamics Over Accuracy
 
-### Single Mind vs. Ensemble
+Primary goal: **measure and steer pool dynamics**
 
-Start with single mind. The "parallel thoughts" are in the pool, not in multiple simultaneous generations. This is cheaper and cleaner.
+Secondary: answer quality (just one signal among many)
 
-Ensemble (multiple minds per iteration) is Phase 4 territory.
-
----
-
-## Success Criteria
-
-**Phase 1:** System runs, produces answers, logs are readable
-
-**Phase 2:** Observable patterns emerge (markers, compression, something)
-
-**Phase 3:** Competitive with or better than CoT on suitable problems
-
-**Exciting:** Emergent phenomena we didn't design - the system develops its own cognitive vocabulary
-
----
-
-## Connection to Logosphere
-
-This is Logosphere turned inward. Same core insight:
-
-> Memes don't exist in minds; they exist in transmission.
-
-Becomes:
-
-> Thoughts don't exist in reasoning steps; they exist in working memory transmission.
-
-The pool is the pressure. Attention scarcity is the constraint. What cognitive structure arises?
+This means:
+- We might make answers *worse* with iteration - that's data
+- Early convergence is boring, not success
+- Chaotic trajectories are interesting, not failures
 
 ---
 
 ## Open Questions
 
-1. **Optimal K/M ratio** - How many thoughts to sample? How big should active memory be?
+1. **Does iteration help or hurt?** Compare one-shot vs pool-after-N on same problems
 
-2. **Termination detection** - How does the system know it's done? Explicit markers? Convergence? Confidence?
+2. **What emerges?** Run many iterations, analyze pool content for patterns
 
-3. **Problem seeding** - Just the problem statement? Or seed with relevant heuristics?
+3. **Can we steer?** Test interventions - do they change dynamics measurably?
 
-4. **Marker bootstrapping** - Do we hint at possible markers? Or pure emergence?
+4. **Small vs large models** - Do small models show more interesting dynamics (more variance, more iterations needed)?
 
-5. **Failure modes** - What happens when the pool fills with garbage? Self-recovery?
-
----
-
-## Infrastructure Update (Jan 2026)
-
-**RTD session completed Phases A-C.** The following infrastructure is now available:
-
-### Available Components
-
-| Component | File | What It Provides |
-|-----------|------|------------------|
-| **VectorDB** | `src/core/vector_db.py` | Replaces Pool. Same active pool semantics + embeddings + similarity search |
-| **EmbeddingClient** | `src/core/embedding_client.py` | OpenRouter API wrapper, batch embedding, abort-on-failure |
-| **AttractorDetector** | `src/analysis/attractors.py` | HDBSCAN clustering on active pool, finds semantic convergence |
-| **Interventions** | `src/core/interventions.py` | Pluggable sampling hooks, registry pattern |
-| **Logger extensions** | `src/core/logger.py` | `log_attractor_state`, `log_embedding_batch`, `log_error` |
-| **Config extensions** | `src/config.py` | Embedding, attractor, intervention defaults |
-
-### Adjustments to Approach
-
-**Original plan:** Reuse Pool directly, minimal changes.
-
-**Updated plan:** Use VectorDB instead. Key benefits:
-
-1. **Convergence detection for free** - AttractorDetector can detect when thoughts converge to attractors. This is a natural termination condition:
-   ```python
-   # Instead of explicit [ANSWER] tag detection:
-   attractor_state = detector.detect(iteration)
-   if attractor_state['num_clusters'] == 1 and attractor_state['clusters'][0]['coherence'] > 0.8:
-       # Thoughts have converged - extract answer from dominant cluster
-   ```
-
-2. **Semantic similarity for marker detection** - Embeddings let us find structurally similar thoughts without string matching:
-   ```python
-   # Find thoughts similar to "[IMPORTANT] ..."
-   similar = vector_db.search_similar(marker_embedding, k=10)
-   ```
-
-3. **Weighted sampling via Intervention** - The hooks pattern is exactly what we need for Phase 2 (marker-weighted sampling):
-   ```python
-   class MarkerWeightedIntervention(Intervention):
-       def on_sample(self, k, round_num):
-           # Boost [IMPORTANT] tagged, reduce [DISCARD] tagged
-           return self.vector_db.sample_weighted(k, weights)
-   ```
-
-4. **Unified persistence** - VectorDB save/load means reasoning sessions can be paused and resumed, analyzed post-hoc.
-
-### Phase 1 Changes
-
-**Before (original plan):**
-- `reasoner.py` uses Pool
-- Manual termination detection (string matching for [ANSWER])
-- No embeddings
-
-**After (updated - Pool deleted in Phase D):**
-- `reasoner.py` uses VectorDB (Pool no longer exists)
-- Termination via AttractorDetector (convergence = answer)
-- Embeddings enabled (small overhead, big analysis value)
-- Can reuse EmbeddingClient directly
-
-**Phase 1.1 Deliverables:**
-- [x] `src/reasoning/reasoner.py` - core loop using VectorDB
-- [x] `scripts/run_reasoner.py` - entry point
-- [ ] `problem.py` - problem loading from files (deferred - inline works)
-- [ ] `test_reasoner.py` - formal tests (deferred)
-
-### Implementation Status
-
-**Phase 1.1 COMPLETE** (Jan 2026)
-
-RTD session completed Phase D - Pool deleted, VectorDB is sole storage. This session validated the infrastructure by building a working reasoner on top.
-
-Tested:
-- `python scripts/run_reasoner.py "What is 23 + 47?"` → 70 (1 iteration)
-- `python scripts/run_reasoner.py "A farmer has 17 chickens and 23 cows..."` → 126 legs (1 iteration)
-
-Observation: Claude solves simple problems in 1 iteration (no pool dynamics visible). Need harder problems or constrained prompts to observe emergent markers and convergence.
+5. **Problem dependence** - Which problems benefit from pool? Which don't?
 
 ---
 
-## Next Action
+## Connection to Logosphere
 
-**Phase 2: Observe emergence on harder problems**
+This is Logosphere turned inward:
 
-1. Test on problems requiring exploration (logic puzzles, ambiguous problems)
-2. Track marker emergence across sessions
-3. Consider: constrained system prompt to force more deliberation?
+> Memes don't exist in minds; they exist in transmission.
 
-Alternative: IDE integration for prompt decomposition (original use case).
+Becomes:
+
+> Thoughts don't exist in reasoning steps; they exist in pool transmission.
+
+The pool is the selection pressure. Attention scarcity is the constraint. What cognitive structure arises when memes compete for working memory?
 
 ---
 
-*The reasoning is in the transmission.*
+*The reasoning is in the transmission. The answer is in the pool state.*

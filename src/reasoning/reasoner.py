@@ -1,12 +1,13 @@
 """
-Working Memory Reasoner - Pool-based thought ecology for reasoning.
+Working Memory Reasoner - Pool-based thought ecology.
 
-Core insight: Reasoning as memetic selection. Thoughts compete for attention
-in a working memory pool. Persistence requires transmission. The answer
-emerges from semantic convergence, not sequential accumulation.
+Core philosophy: No explicit protocols. The pool state IS the output.
+
+- No [ANSWER] tags - memes win by replication, not declaration
+- Termination is dynamics-based (convergence, stability, timeout)
+- We measure and steer the pool, not the answers
 """
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -19,20 +20,15 @@ from src.core.mind import invoke_mind
 from src.analysis.attractors import AttractorDetector
 
 
-# Default system prompt for reasoning
-REASONER_SYSTEM_PROMPT = """You are reasoning through a problem. You receive thoughts from your working memory.
+# Minimal system prompt - no protocols, just framing
+REASONER_SYSTEM_PROMPT = """You receive thoughts from a shared pool.
 
-Read the thoughts. Think privately. Then transmit thoughts back to working memory.
+Read them. Think privately. Transmit thoughts worth keeping.
 
-Transmitted thoughts persist and may be sampled again. Thoughts not transmitted are forgotten.
+Transmitted thoughts persist and compete for attention.
+Thoughts not transmitted are forgotten.
 
-Guidelines:
-- Build on promising thoughts
-- Discard dead ends (don't re-transmit them)
-- When confident in an answer, transmit: [ANSWER] your answer here
-
-Format: Thoughts separated by --- on its own line.
-Private thinking comes before the first ---."""
+Format: Thoughts separated by --- on its own line."""
 
 
 @dataclass
@@ -43,9 +39,11 @@ class ReasonerConfig:
     k_samples: int = 5  # Thoughts sampled per iteration
     active_pool_size: int = 50  # Working memory capacity
 
-    # Termination
+    # Termination (dynamics-based)
     max_iterations: int = 30
-    convergence_threshold: float = 0.75  # Coherence for convergence detection
+    convergence_threshold: float = 0.75  # Coherence for convergence
+    convergence_coverage: float = 0.50  # Cluster must cover this % of pool
+    stability_window: int = 3  # Iterations of stable clusters to terminate
     min_cluster_size: int = 3  # For HDBSCAN
 
     # LLM
@@ -62,17 +60,35 @@ class ReasonerConfig:
 
 
 @dataclass
+class IterationMetrics:
+    """Metrics for a single iteration."""
+    iteration: int
+    pool_size: int
+    active_size: int
+    num_clusters: int
+    dominant_cluster_size: int
+    dominant_cluster_share: float
+    coherence: float
+    diversity: float  # Mean pairwise distance in active pool
+    thoughts_added: int
+
+
+@dataclass
 class ReasoningResult:
     """Result of a reasoning session."""
-    answer: Optional[str]
+    termination_reason: str  # 'converged', 'stable', 'timeout'
     iterations: int
-    termination_reason: str  # 'answer_tag', 'convergence', 'max_iterations'
     total_thoughts: int
     final_pool_size: int
 
-    # Optional detailed data
+    # Pool state output
+    dominant_cluster_texts: list[str]  # Representative texts from dominant cluster
+    cluster_count: int
+    final_coherence: float
+
+    # Trajectory data
+    metrics_history: list[IterationMetrics] = field(default_factory=list)
     thinking_trace: list[str] = field(default_factory=list)
-    convergence_history: list[dict] = field(default_factory=list)
 
 
 class Reasoner:
@@ -81,10 +97,11 @@ class Reasoner:
 
     The reasoning loop:
     1. Sample K thoughts from working memory (VectorDB)
-    2. Invoke Mind with sampled thoughts
+    2. Model thinks, transmits (no protocol)
     3. Embed new thoughts, add to VectorDB
-    4. Check termination (answer tag OR convergence OR max iterations)
-    5. Repeat
+    4. Measure dynamics (diversity, clusters, stability)
+    5. Check termination (dynamics only - convergence, stability, timeout)
+    6. Output = pool state (dominant cluster or trajectory)
     """
 
     def __init__(self, config: Optional[ReasonerConfig] = None):
@@ -107,30 +124,30 @@ class Reasoner:
         # State
         self.iteration = 0
         self.thinking_trace: list[str] = []
-        self.convergence_history: list[dict] = []
+        self.metrics_history: list[IterationMetrics] = []
+        self.cluster_history: list[int] = []  # Track cluster count for stability
 
     def solve(self, problem: str) -> ReasoningResult:
         """
-        Solve a problem using pool-based reasoning.
+        Run reasoning loop. Terminates on dynamics, not protocols.
 
         Args:
-            problem: The problem statement
+            problem: The problem statement (seeded into pool)
 
         Returns:
-            ReasoningResult with answer and metadata
+            ReasoningResult with pool state and trajectory
         """
         self._reset()
 
         # Seed pool with problem
-        self._add_thought(f"[PROBLEM] {problem}", iteration=-1)
+        self._add_thought(f"Problem: {problem}", iteration=-1)
 
         if self.config.verbose:
             print(f"Problem: {problem}")
             print(f"Max iterations: {self.config.max_iterations}")
             print("-" * 40)
 
-        answer = None
-        termination_reason = "max_iterations"
+        termination_reason = "timeout"
 
         while self.iteration < self.config.max_iterations:
             # Sample thoughts from working memory
@@ -142,7 +159,7 @@ class Reasoner:
             if self.config.verbose:
                 print(f"\n[Iteration {self.iteration}] Sampled {len(thoughts)} thoughts")
 
-            # Invoke Mind
+            # Invoke Mind (no protocol expectations)
             result = invoke_mind(
                 system_prompt=self.config.system_prompt,
                 messages=thoughts,
@@ -154,65 +171,54 @@ class Reasoner:
                 self.thinking_trace.append(result['thinking'])
 
             # Process transmitted thoughts
+            thoughts_added = 0
             for thought in result['transmitted']:
                 thought = thought.strip()
                 if not thought:
                     continue
-
-                # Check for explicit answer
-                answer_match = self._extract_answer(thought)
-                if answer_match:
-                    answer = answer_match
-                    termination_reason = "answer_tag"
-                    self._add_thought(thought, self.iteration)
-                    if self.config.verbose:
-                        print(f"  [ANSWER FOUND] {answer}")
-                    break
-
-                # Add thought to pool
                 self._add_thought(thought, self.iteration)
+                thoughts_added += 1
                 if self.config.verbose:
                     preview = thought[:60] + "..." if len(thought) > 60 else thought
-                    print(f"  → {preview}")
+                    print(f"  -> {preview}")
 
-            if answer:
+            # Measure dynamics
+            metrics = self._measure_dynamics(thoughts_added)
+            self.metrics_history.append(metrics)
+
+            if self.config.verbose:
+                print(f"  [metrics] clusters={metrics.num_clusters}, "
+                      f"coherence={metrics.coherence:.2f}, "
+                      f"diversity={metrics.diversity:.2f}")
+
+            # Check termination (dynamics only)
+            term = self._check_termination(metrics)
+            if term:
+                termination_reason = term
+                if self.config.verbose:
+                    print(f"\n[TERMINATED: {term}]")
                 break
-
-            # Check for convergence
-            if self.vector_db.active_size() >= self.config.min_cluster_size * 2:
-                attractor_state = self.attractor_detector.detect(self.iteration)
-                self.convergence_history.append(attractor_state)
-
-                if self._check_convergence(attractor_state):
-                    # Extract answer from dominant cluster
-                    answer = self._extract_from_cluster(attractor_state)
-                    termination_reason = "convergence"
-                    if self.config.verbose:
-                        print(f"\n[CONVERGENCE] Pool converged to attractor")
-                        print(f"  Answer: {answer}")
-                    break
 
             self.iteration += 1
 
-        # Final extraction if no answer yet
-        if not answer:
-            answer = self._extract_final_answer()
-            if self.config.verbose:
-                print(f"\n[MAX ITERATIONS] Extracting best answer from pool")
-                print(f"  Answer: {answer}")
+        # Extract output from pool state
+        dominant_texts = self._extract_dominant_cluster()
+        final_state = self.attractor_detector.detect(self.iteration)
 
         # Save if output_dir specified
         if self.config.output_dir:
             self.vector_db.save(self.config.output_dir / "vector_db")
 
         return ReasoningResult(
-            answer=answer,
-            iterations=self.iteration + 1,
             termination_reason=termination_reason,
+            iterations=self.iteration + 1,
             total_thoughts=self.vector_db.size(),
             final_pool_size=self.vector_db.active_size(),
+            dominant_cluster_texts=dominant_texts,
+            cluster_count=final_state.get('num_clusters', 0),
+            final_coherence=self._get_dominant_coherence(final_state),
+            metrics_history=self.metrics_history,
             thinking_trace=self.thinking_trace,
-            convergence_history=self.convergence_history
         )
 
     def _reset(self):
@@ -226,7 +232,8 @@ class Reasoner:
         )
         self.iteration = 0
         self.thinking_trace = []
-        self.convergence_history = []
+        self.metrics_history = []
+        self.cluster_history = []
 
     def _add_thought(self, thought: str, iteration: int):
         """Add thought to VectorDB with embedding."""
@@ -239,70 +246,113 @@ class Reasoner:
                 mind_id=0
             )
 
-    def _extract_answer(self, thought: str) -> Optional[str]:
-        """Extract answer from [ANSWER] tagged thought."""
-        match = re.search(r'\[ANSWER\]\s*(.+)', thought, re.IGNORECASE | re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        return None
-
-    def _check_convergence(self, attractor_state: dict) -> bool:
-        """Check if pool has converged to a stable attractor."""
-        if not attractor_state.get('detected'):
-            return False
-
+    def _measure_dynamics(self, thoughts_added: int) -> IterationMetrics:
+        """Measure pool dynamics for this iteration."""
+        # Get attractor state
+        attractor_state = self.attractor_detector.detect(self.iteration)
         clusters = attractor_state.get('clusters', [])
-        if not clusters:
-            return False
 
-        # Check for dominant cluster with high coherence
-        dominant = max(clusters, key=lambda c: c['size'])
+        # Dominant cluster stats
+        if clusters:
+            dominant = max(clusters, key=lambda c: c['size'])
+            dominant_size = dominant['size']
+            coherence = dominant['coherence']
+        else:
+            dominant_size = 0
+            coherence = 0.0
 
-        # Convergence: single dominant cluster OR very high coherence
-        pool_coverage = dominant['size'] / self.vector_db.active_size()
+        active_size = self.vector_db.active_size()
+        dominant_share = dominant_size / active_size if active_size > 0 else 0.0
 
-        return (
-            dominant['coherence'] > self.config.convergence_threshold
-            and pool_coverage > 0.5
+        # Diversity: mean pairwise distance in active pool
+        diversity = self._compute_diversity()
+
+        # Track cluster count for stability detection
+        self.cluster_history.append(len(clusters))
+
+        return IterationMetrics(
+            iteration=self.iteration,
+            pool_size=self.vector_db.size(),
+            active_size=active_size,
+            num_clusters=len(clusters),
+            dominant_cluster_size=dominant_size,
+            dominant_cluster_share=dominant_share,
+            coherence=coherence,
+            diversity=diversity,
+            thoughts_added=thoughts_added,
         )
 
-    def _extract_from_cluster(self, attractor_state: dict) -> Optional[str]:
-        """Extract answer from dominant cluster."""
+    def _compute_diversity(self) -> float:
+        """Compute mean pairwise cosine distance in active pool."""
+        embeddings, _ = self.vector_db.get_active_pool_data()
+        if len(embeddings) < 2:
+            return 0.0
+
+        # Sample if too large (for efficiency)
+        if len(embeddings) > 50:
+            indices = np.random.choice(len(embeddings), 50, replace=False)
+            embeddings = embeddings[indices]
+
+        # Compute pairwise cosine distances
+        # Normalize
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        normalized = embeddings / (norms + 1e-8)
+
+        # Cosine similarity matrix
+        sim_matrix = normalized @ normalized.T
+
+        # Mean of upper triangle (excluding diagonal)
+        n = len(sim_matrix)
+        upper_indices = np.triu_indices(n, k=1)
+        mean_sim = sim_matrix[upper_indices].mean()
+
+        # Convert to distance
+        return 1.0 - mean_sim
+
+    def _check_termination(self, metrics: IterationMetrics) -> Optional[str]:
+        """Check dynamics-based termination conditions."""
+
+        # Convergence: single dominant cluster with high coherence
+        if (metrics.dominant_cluster_share > self.config.convergence_coverage
+                and metrics.coherence > self.config.convergence_threshold):
+            return "converged"
+
+        # Stability: cluster structure unchanged for N iterations
+        if len(self.cluster_history) >= self.config.stability_window:
+            recent = self.cluster_history[-self.config.stability_window:]
+            if len(set(recent)) == 1 and recent[0] > 0:
+                # Same non-zero cluster count for stability_window iterations
+                return "stable"
+
+        return None
+
+    def _extract_dominant_cluster(self) -> list[str]:
+        """Extract representative texts from dominant cluster."""
+        attractor_state = self.attractor_detector.detect(self.iteration)
         clusters = attractor_state.get('clusters', [])
+
         if not clusters:
-            return None
+            # No clusters - return recent messages
+            _, metadata = self.vector_db.get_active_pool_data()
+            return [m['text'] for m in metadata[-3:]]
 
         dominant = max(clusters, key=lambda c: c['size'])
 
-        # Get representative message from cluster
+        # Get representative messages
         if 'representative_ids' in dominant and dominant['representative_ids']:
-            rep_id = dominant['representative_ids'][0]
-            meta = self.vector_db.get_message(rep_id)
-            if meta:
-                text = meta['text']
-                # Try to extract answer tag first
-                answer = self._extract_answer(text)
-                if answer:
-                    return answer
-                # Otherwise return the representative text
-                return text
+            texts = []
+            for vid in dominant['representative_ids'][:3]:
+                meta = self.vector_db.get_message(vid)
+                if meta:
+                    texts.append(meta['text'])
+            return texts
 
-        return None
+        return []
 
-    def _extract_final_answer(self) -> Optional[str]:
-        """Extract best answer from pool when max iterations reached."""
-        # Look for any [ANSWER] tagged messages in active pool
-        _, metadata = self.vector_db.get_active_pool_data()
-
-        for meta in reversed(metadata):  # Most recent first
-            answer = self._extract_answer(meta['text'])
-            if answer:
-                return answer
-
-        # No explicit answer - return most recent non-problem thought
-        for meta in reversed(metadata):
-            text = meta['text']
-            if not text.startswith('[PROBLEM]'):
-                return text
-
-        return None
+    def _get_dominant_coherence(self, attractor_state: dict) -> float:
+        """Get coherence of dominant cluster."""
+        clusters = attractor_state.get('clusters', [])
+        if not clusters:
+            return 0.0
+        dominant = max(clusters, key=lambda c: c['size'])
+        return dominant.get('coherence', 0.0)
