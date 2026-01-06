@@ -619,39 +619,37 @@ faiss-cpu or hnswlib - the VectorDB interface is designed for drop-in replacemen
 ## Implementation Order (Hybrid Validation)
 
 **Phase A: Core Components + Baseline Validation**
-1. **VectorDB** (`src/core/vector_db.py`)
-   - Build with dual-mode support (runtime + post-hoc)
-   - Implement FAISS indexing, active pool tracking, sampling
-   - Add `load_from_embeddings()` for existing .npz files
+1. ✅ **VectorDB** (`src/core/vector_db.py`)
+   - sklearn-based (NearestNeighbors), swappable to FAISS if needed
+   - Dual-mode support (runtime + post-hoc via `load_from_legacy()`)
+   - Active pool tracking, random/weighted sampling, similarity search
 
-2. **Validate on Baseline Data** (scripts/validate_vector_db.py)
-   - Load 4 baseline experiments from existing .npz + JSONL
-   - Test active pool tracking, sampling, search
-   - **Validation gate**: VectorDB handles existing data correctly
+2. ✅ **Validate on Baseline Data**
+   - Loaded all 4 baseline experiments from .npz + JSONL
+   - Verified active pool tracking, sampling, search, save/load roundtrip
 
-3. **AttractorDetector** (`src/analysis/attractors.py`)
+3. ✅ **AttractorDetector** (`src/analysis/attractors.py`)
    - HDBSCAN clustering on active pool embeddings
-   - Representative message extraction
-   - Temporal tracking
+   - Representative message extraction, coherence scoring
+   - All 4 baselines → 2 clusters each, 0.74-0.78 coherence
 
-4. **Baseline Attractor Analysis** (scripts/analyze_baseline_attractors.py)
-   - Cluster all 4 baseline experiments
-   - Extract representative messages per cluster
-   - Tune HDBSCAN parameters (min_cluster_size, etc.)
-   - **Validation gate**: Attractors are semantically coherent
+4. ✅ **Baseline Attractor Analysis**
+   - Validated on all 4 baseline experiments
+   - Confirmed semantic coherence (AI-assistant acknowledgment patterns)
 
 **Phase B: Runtime Components**
-5. **EmbeddingClient** (`src/core/embedding_client.py`)
-   - OpenRouter API wrapper
-   - Batch embedding with abort-on-failure
-   - Unit tests with mocks
+5. ✅ **EmbeddingClient** (`src/core/embedding_client.py`)
+   - OpenRouter API wrapper (text-embedding-3-small)
+   - Batch embedding with abort-on-failure (EmbeddingAPIError)
+   - Validated with real API calls
 
-6. **Interventions Base** (`src/core/interventions.py`)
-   - Abstract base class with hooks
-   - NoIntervention implementation only
+6. ✅ **Interventions Base** (`src/core/interventions.py`)
+   - Abstract base class with on_sample/on_round_start/on_round_end hooks
+   - NoIntervention implementation (baseline sampling)
+   - Registry + factory for future intervention strategies
 
-**Phase C: Integration**
-7. **Modify Logger** (`src/core/logger.py`)
+**Phase C: Integration** ← CURRENT
+7. 🔄 **Modify Logger** (`src/core/logger.py`)
    - New event methods (vector IDs, attractor_state, thinking)
    - Update existing methods to reference IDs
 
