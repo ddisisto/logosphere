@@ -42,11 +42,75 @@ API_BASE_URL = "https://openrouter.ai/api/v1"
 DELIMITER = "---"
 
 
+# Real-time detection defaults (opt-in for backward compatibility)
+DEFAULT_EMBEDDING_CONFIG = {
+    'enabled': False,
+    'model': 'openai/text-embedding-3-small',
+    'fail_mode': 'abort',  # 'abort' or 'skip'
+}
+
+DEFAULT_ATTRACTOR_CONFIG = {
+    'enabled': False,
+    'algorithm': 'hdbscan',
+    'min_cluster_size': 5,
+    'cluster_active_pool_only': True,
+}
+
+DEFAULT_INTERVENTION_CONFIG = {
+    'enabled': False,
+    'strategy': 'none',
+}
+
+
 # System prompt - minimal functional framing
 SYSTEM_PROMPT = """You receive messages from others. Read them.
 
 Content before the first --- is private thinking, not transmitted.
 After ---, write messages for others, separated by ---."""
+
+
+def load_experiment_config(exp_dir: Path) -> dict:
+    """
+    Load experiment config, merging with defaults.
+
+    Args:
+        exp_dir: Experiment directory containing config.json
+
+    Returns:
+        Complete config dict with all sections
+    """
+    import json
+
+    config_path = exp_dir / "config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"No config.json in {exp_dir}")
+
+    with open(config_path) as f:
+        config = json.load(f)
+
+    # Merge with defaults for new sections
+    if 'embeddings' not in config:
+        config['embeddings'] = DEFAULT_EMBEDDING_CONFIG.copy()
+    else:
+        merged = DEFAULT_EMBEDDING_CONFIG.copy()
+        merged.update(config['embeddings'])
+        config['embeddings'] = merged
+
+    if 'attractor_detection' not in config:
+        config['attractor_detection'] = DEFAULT_ATTRACTOR_CONFIG.copy()
+    else:
+        merged = DEFAULT_ATTRACTOR_CONFIG.copy()
+        merged.update(config['attractor_detection'])
+        config['attractor_detection'] = merged
+
+    if 'interventions' not in config:
+        config['interventions'] = DEFAULT_INTERVENTION_CONFIG.copy()
+    else:
+        merged = DEFAULT_INTERVENTION_CONFIG.copy()
+        merged.update(config['interventions'])
+        config['interventions'] = merged
+
+    return config
 
 
 def create_experiment_dir(name: str = None) -> Path:

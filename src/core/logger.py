@@ -2,12 +2,22 @@
 Structured logging for Logosphere experiments.
 
 Single JSONL file with typed events for streaming and analysis.
+
+Event types:
+- experiment_start: Config, seeds
+- round_start: Pool state
+- mind_invocation: Full I/O (legacy: includes text, new: references vector IDs)
+- round_end: Messages added
+- attractor_state: Clustering results (new)
+- embedding_batch: Embedding performance (new)
+- error: Abort scenarios (new)
+- experiment_end: Summary stats
 """
 
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 
 class Logger:
@@ -97,20 +107,115 @@ class Logger:
             "raw_output": raw_output
         })
 
-    def log_round_end(self, round_num: int, messages_added: int, pool_delta: list[str]) -> None:
+    def log_round_end(
+        self,
+        round_num: int,
+        messages_added: int,
+        pool_delta: Optional[list[str]] = None,
+        vector_ids: Optional[list[int]] = None,
+    ) -> None:
         """
         Log end of round with pool delta.
 
         Args:
             round_num: Current round number
             messages_added: Number of messages added this round
-            pool_delta: New messages added to pool this round
+            pool_delta: New messages added (legacy, for backward compat)
+            vector_ids: Vector IDs of added messages (new VectorDB mode)
         """
-        self._write_event("round_end", {
+        data = {
             "round": round_num,
             "messages_added": messages_added,
-            "pool_delta": pool_delta
+        }
+        if pool_delta is not None:
+            data["pool_delta"] = pool_delta
+        if vector_ids is not None:
+            data["vector_ids"] = vector_ids
+
+        self._write_event("round_end", data)
+
+    def log_attractor_state(
+        self,
+        round_num: int,
+        num_clusters: int,
+        noise_count: int,
+        clusters: list[dict],
+        detected: bool = True,
+    ) -> None:
+        """
+        Log attractor detection results.
+
+        Args:
+            round_num: Current round number
+            num_clusters: Number of clusters found
+            noise_count: Points not in any cluster
+            clusters: Cluster details (id, size, coherence, representative)
+            detected: Whether attractors were detected
+        """
+        # Simplify cluster data for logging (exclude centroid vectors)
+        logged_clusters = []
+        for c in clusters:
+            logged_clusters.append({
+                "id": c["id"],
+                "size": c["size"],
+                "coherence": c.get("coherence"),
+                "representative": c.get("representative", "")[:200],  # Truncate
+                "rounds": c.get("rounds", []),
+            })
+
+        self._write_event("attractor_state", {
+            "round": round_num,
+            "detected": detected,
+            "num_clusters": num_clusters,
+            "noise_count": noise_count,
+            "clusters": logged_clusters,
         })
+
+    def log_embedding_batch(
+        self,
+        round_num: int,
+        num_texts: int,
+        latency_ms: float,
+        model: str,
+    ) -> None:
+        """
+        Log embedding batch performance.
+
+        Args:
+            round_num: Current round number
+            num_texts: Number of texts embedded
+            latency_ms: API call latency in milliseconds
+            model: Embedding model used
+        """
+        self._write_event("embedding_batch", {
+            "round": round_num,
+            "num_texts": num_texts,
+            "latency_ms": latency_ms,
+            "model": model,
+        })
+
+    def log_error(
+        self,
+        message: str,
+        round_num: Optional[int] = None,
+        error_type: str = "error",
+    ) -> None:
+        """
+        Log error event (may trigger experiment abort).
+
+        Args:
+            message: Error description
+            round_num: Round where error occurred (if applicable)
+            error_type: Error category (error, warning, abort)
+        """
+        data = {
+            "message": message,
+            "error_type": error_type,
+        }
+        if round_num is not None:
+            data["round"] = round_num
+
+        self._write_event("error", data)
 
     def log_experiment_end(self, total_rounds: int, final_pool_size: int, total_tokens: int) -> None:
         """
