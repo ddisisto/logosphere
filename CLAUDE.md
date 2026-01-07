@@ -33,11 +33,14 @@ logosphere/
 │   │   ├── orchestrator.py # Main loop, coordination
 │   │   ├── logger.py      # Structured logging
 │   │   └── init_parser.py # Seed message parsing
+│   ├── reasoning/         # Working memory reasoner
+│   │   └── reasoner.py    # Pool-based thought ecology
 │   ├── analysis/          # Analysis tools
 │   │   └── attractors.py  # HDBSCAN clustering for attractor detection
 │   └── config.py          # Parameters and system prompt
 ├── scripts/
 │   ├── run.py             # Experiment entry point
+│   ├── run_reasoner.py    # Reasoning session entry point
 │   └── analyze.py         # Post-hoc analysis
 ├── tests/                 # Validation tests
 └── experiments/           # Self-contained experiment runs
@@ -45,7 +48,7 @@ logosphere/
         ├── init.md        # Seed messages
         ├── config.json    # Parameter snapshot
         ├── logs/          # JSONL event stream
-        └── vector_db/     # Embeddings + metadata (new)
+        └── vector_db/     # Embeddings + metadata
 ```
 
 ---
@@ -59,6 +62,7 @@ uv sync --extra dev          # Add dev tools (pytest)
 ```
 
 Run experiments: `python scripts/run.py <experiment_name>`
+Run reasoner: `python scripts/run_reasoner.py "problem statement"`
 Run analysis: `python scripts/analyze.py <experiment_name> --tool <tool>`
 Run tests: `pytest`
 
@@ -123,6 +127,24 @@ Coordinates rounds with real-time detection:
 **Sequential invocation:** Minds within a round see VectorDB state as it evolves. Mind 0 adds messages that Mind 1 might sample.
 
 **Abort on failure:** Embedding API errors trigger ExperimentAbortError for clean failure (partial results preserved).
+
+### Working Memory Reasoner (src/reasoning/reasoner.py)
+
+Logosphere turned inward - pool-based thought ecology for reasoning:
+
+- **No protocols** - no `[ANSWER]` tags, no hardcoded markers
+- **Pool state = output** - answer emerges from dominant cluster, not explicit declaration
+- **Dynamics-based termination** - convergence, stability, or timeout
+- **Per-iteration metrics** - diversity, cluster count, coherence tracked
+
+```python
+python scripts/run_reasoner.py "What is 23 + 47?"
+python scripts/run_reasoner.py --model anthropic/claude-sonnet-4-20250514 --no-early-termination "problem"
+```
+
+**Philosophy:** Memes win by replication, not by declaring themselves important. If markers like `[IMPORTANT]` help, they'll emerge and spread naturally.
+
+See `docs/working-memory-reasoner.md` for full plan.
 
 ### Logging (src/core/logger.py)
 
@@ -297,18 +319,18 @@ This makes the pool the "culture" - the collective memory that evolves.
 
 ## Future Directions
 
-**Currently planned (see docs/):**
-- Vector DB for similarity search at scale
-- Attractor detection via clustering (HDBSCAN)
-- Cross-experiment basin comparison
-- Semantic querying ("find messages about X")
+**Recently implemented:**
+- VectorDB for similarity search (replaces Pool)
+- Attractor detection via HDBSCAN clustering
+- Working Memory Reasoner (pool-based thought ecology)
+- Real-time dynamics tracking (diversity, coherence, clusters)
 
 **Potential experiments:**
 - Heterogeneous populations (multiple models in same pool)
 - Diversity interventions (anti-convergence sampling strategies)
-- Multi-turn Minds (conversation before transmission)
+- Inject pool state awareness as thoughts (not system prompt)
 - Cross-pool pollination (message exchange between experiments)
-- Real-time attractor detection (intervene during run)
+- Small model dynamics comparison (haiku vs sonnet)
 
 **Research questions:**
 - Can we measure "meme fitness" independent of model?
