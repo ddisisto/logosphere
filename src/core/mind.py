@@ -68,7 +68,12 @@ def parse_output(raw: str) -> tuple[str, list[str]]:
     return thinking, messages
 
 
-def invoke_mind(system_prompt: str, messages: list[str], token_limit: int = TOKEN_LIMIT) -> dict:
+def invoke_mind(
+    system_prompt: str,
+    messages: list[str],
+    token_limit: int = TOKEN_LIMIT,
+    model: str = None
+) -> dict:
     """
     Invoke LLM Mind with formatted input.
 
@@ -76,6 +81,7 @@ def invoke_mind(system_prompt: str, messages: list[str], token_limit: int = TOKE
         system_prompt: System-level framing
         messages: Sampled messages from pool
         token_limit: Maximum tokens for generation
+        model: Model to use (default: from config)
 
     Returns:
         {
@@ -98,7 +104,7 @@ def invoke_mind(system_prompt: str, messages: list[str], token_limit: int = TOKE
     }
 
     payload = {
-        "model": MODEL,
+        "model": model or MODEL,
         "messages": [
             {"role": "user", "content": formatted_input}
         ],

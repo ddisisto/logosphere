@@ -58,6 +58,23 @@ def main():
         help="Coherence threshold for convergence (default: 0.75)"
     )
     parser.add_argument(
+        "--stability-window",
+        type=int,
+        default=3,
+        help="Iterations of stable cluster count to terminate (default: 3)"
+    )
+    parser.add_argument(
+        "--no-early-termination",
+        action="store_true",
+        help="Run all iterations, ignore convergence/stability"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="anthropic/claude-haiku-4-5-20241022",
+        help="Model to use (default: anthropic/claude-haiku-4-5-20241022)"
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         default=True,
@@ -89,6 +106,9 @@ def main():
         k_samples=args.k_samples,
         active_pool_size=args.pool_size,
         convergence_threshold=args.convergence_threshold,
+        stability_window=args.stability_window,
+        no_early_termination=args.no_early_termination,
+        model=args.model,
         verbose=not args.quiet,
         output_dir=args.output_dir
     )
@@ -98,6 +118,7 @@ def main():
 
     print("=" * 60)
     print("WORKING MEMORY REASONER")
+    print(f"Model: {config.model}")
     print("Pool state = output. No protocols.")
     print("=" * 60)
 

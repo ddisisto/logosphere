@@ -45,9 +45,10 @@ class ReasonerConfig:
     convergence_coverage: float = 0.50  # Cluster must cover this % of pool
     stability_window: int = 3  # Iterations of stable clusters to terminate
     min_cluster_size: int = 3  # For HDBSCAN
+    no_early_termination: bool = False  # If True, run all iterations
 
     # LLM
-    model: str = "anthropic/claude-sonnet-4-20250514"
+    model: str = "anthropic/claude-haiku-4-5-20241022"
     token_limit: int = 4000
     system_prompt: str = REASONER_SYSTEM_PROMPT
 
@@ -163,7 +164,8 @@ class Reasoner:
             result = invoke_mind(
                 system_prompt=self.config.system_prompt,
                 messages=thoughts,
-                token_limit=self.config.token_limit
+                token_limit=self.config.token_limit,
+                model=self.config.model
             )
 
             # Store thinking (not transmitted)
@@ -311,6 +313,10 @@ class Reasoner:
 
     def _check_termination(self, metrics: IterationMetrics) -> Optional[str]:
         """Check dynamics-based termination conditions."""
+
+        # Skip early termination if disabled
+        if self.config.no_early_termination:
+            return None
 
         # Convergence: single dominant cluster with high coherence
         if (metrics.dominant_cluster_share > self.config.convergence_coverage
