@@ -66,7 +66,7 @@ class ReasonerConfig:
     no_early_termination: bool = False  # If True, run all iterations
 
     # LLM
-    model: str = "anthropic/claude-haiku-4-5-20241022"
+    model: str = "anthropic/claude-haiku-4.5"
     token_limit: int = 4000
     system_prompt: str = REASONER_SYSTEM_PROMPT
 
