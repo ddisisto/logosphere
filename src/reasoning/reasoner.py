@@ -21,7 +21,7 @@ from src.core.mind import invoke_mind
 from src.analysis.attractors import AttractorDetector
 
 
-# Minimal system prompt - no protocols, just framing
+# Minimal system prompt - minimal protocols, just framing
 REASONER_SYSTEM_PROMPT = """You receive thoughts from a shared pool.
 
 Read them. Think privately. Transmit thoughts worth keeping.
@@ -30,6 +30,8 @@ Transmitted thoughts persist and compete for attention.
 Thoughts not transmitted are forgotten.
 Thoughts should be largely self-contained, but may reference or include others.
 Thoughts may be retransmitted verbatim, and/or compressed, extended, decomposed, recomposed, etc.
+
+Incoming prompts from external sources are prefixed with '>>> '.
 
 Format: Thoughts (multi-line, unconstrained) separated by --- on its own line. e.g.
 
@@ -42,6 +44,9 @@ This is another
 ---
 ```
 """
+
+# Prefix for externally-sourced prompts
+EXTERNAL_PROMPT_PREFIX = ">>> "
 
 
 @dataclass
@@ -140,7 +145,7 @@ class Reasoner:
         self.thinking_trace: list[str] = []
         self.metrics_history: list[IterationMetrics] = []
         self.cluster_history: list[int] = []  # Track cluster count for stability
-        self._problem: Optional[str] = None  # Stored for resume capability
+        self._prompts: list[str] = []  # External prompts, stored for resume
 
     @classmethod
     def from_checkpoint(
@@ -186,7 +191,13 @@ class Reasoner:
         # Restore iteration state
         reasoner.iteration = state["iteration"]
         reasoner.cluster_history = state["cluster_history"]
-        reasoner._problem = state["problem"]
+        # Handle both old "problem" and new "prompts" format
+        if "prompts" in state:
+            reasoner._prompts = state["prompts"]
+        elif "problem" in state and state["problem"]:
+            reasoner._prompts = [state["problem"]]
+        else:
+            reasoner._prompts = []
 
         # Restore metrics history
         metrics_path = output_dir / "metrics.jsonl"
@@ -212,49 +223,79 @@ class Reasoner:
 
         return reasoner
 
-    def solve(self, problem: str) -> ReasoningResult:
+    def run(self, prompts: list[str] | str) -> ReasoningResult:
         """
         Run reasoning loop from fresh start. Terminates on dynamics, not protocols.
 
         Args:
-            problem: The problem statement (seeded into pool)
+            prompts: External prompt(s) to seed the pool (string or list of strings)
 
         Returns:
             ReasoningResult with pool state and trajectory
         """
         self._reset()
-        self._problem = problem
 
-        # Seed pool with problem
-        self._add_thought(f"Problem: {problem}", iteration=-1)
+        # Normalize to list
+        if isinstance(prompts, str):
+            prompts = [prompts]
+
+        self._prompts = list(prompts)
+
+        # Seed pool with prompts
+        for prompt in prompts:
+            self._add_thought(f"{EXTERNAL_PROMPT_PREFIX}{prompt}", iteration=-1)
 
         if self.config.verbose:
-            print(f"Problem: {problem}")
+            print(f"Prompts: {len(prompts)}")
+            for p in prompts:
+                preview = p[:60] + "..." if len(p) > 60 else p
+                print(f"  >>> {preview}")
             print(f"Max iterations: {self.config.max_iterations}")
             print("-" * 40)
 
         return self._run_loop()
 
-    def continue_solving(self) -> ReasoningResult:
+    # Alias for backwards compatibility
+    solve = run
+
+    def continue_run(self, prompts: list[str] | str | None = None) -> ReasoningResult:
         """
         Continue reasoning from current state (for resume).
 
         Use this after loading from checkpoint to continue iterations.
+        Optionally inject new prompts before continuing.
+
+        Args:
+            prompts: Optional new prompt(s) to inject before continuing
 
         Returns:
             ReasoningResult with pool state and trajectory
         """
-        if self._problem is None:
-            raise ValueError("Cannot continue: no problem loaded. Use solve() or from_checkpoint() first.")
+        # Inject new prompts if provided
+        if prompts:
+            if isinstance(prompts, str):
+                prompts = [prompts]
+            for prompt in prompts:
+                self._add_thought(f"{EXTERNAL_PROMPT_PREFIX}{prompt}", self.iteration)
+                self._prompts.append(prompt)
 
         if self.config.verbose:
-            print(f"Resuming: {self._problem}")
+            if self._prompts:
+                print(f"Prompts: {len(self._prompts)}")
+                for p in self._prompts[-3:]:  # Show last 3
+                    preview = p[:60] + "..." if len(p) > 60 else p
+                    print(f"  >>> {preview}")
+                if len(self._prompts) > 3:
+                    print(f"  ... and {len(self._prompts) - 3} more")
             print(f"Current iteration: {self.iteration}")
             print(f"Max iterations: {self.config.max_iterations}")
             print(f"Pool size: {self.vector_db.size()}")
             print("-" * 40)
 
         return self._run_loop()
+
+    # Alias for backwards compatibility
+    continue_solving = continue_run
 
     def _run_loop(self) -> ReasoningResult:
         """
@@ -342,7 +383,7 @@ class Reasoner:
         )
 
     def _reset(self):
-        """Reset state for new problem."""
+        """Reset state for new session."""
         self.vector_db = VectorDB(
             active_pool_size=self.config.active_pool_size
         )
@@ -354,7 +395,7 @@ class Reasoner:
         self.thinking_trace = []
         self.metrics_history = []
         self.cluster_history = []
-        self._problem = None
+        self._prompts = []
 
     def _save_checkpoint(self):
         """Save full state for resume capability."""
@@ -373,7 +414,7 @@ class Reasoner:
             "iteration": self.iteration,
             "cluster_history": self.cluster_history,
             "config": config_dict,
-            "problem": self._problem,
+            "prompts": self._prompts,
         }
         (self.config.output_dir / "state.json").write_text(
             json.dumps(state, indent=2)

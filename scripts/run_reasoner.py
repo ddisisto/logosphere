@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Run the working memory reasoner on a problem.
+Run the working memory reasoner.
 
-No protocols. Pool state = output. Termination is dynamics-based.
+Pool state = output. Minimal protocols.
 
 Usage:
-    python scripts/run_reasoner.py "What is 23 + 47?"
-    python scripts/run_reasoner.py --max-iterations 20 "problem here"
-    python scripts/run_reasoner.py --resume ./output_dir --max-iterations 100
+    python scripts/run_reasoner.py "Explore this topic"
+    python scripts/run_reasoner.py "First thought" "Second thought" -o ./out
+    python scripts/run_reasoner.py --resume ./out "New prompt to inject"
+    python scripts/run_reasoner.py --resume ./out -n 10
 """
 
 import argparse
@@ -25,14 +26,9 @@ def main():
         description="Working Memory Reasoner - Pool-based thought ecology"
     )
     parser.add_argument(
-        "problem",
-        nargs="?",
-        help="The problem to solve"
-    )
-    parser.add_argument(
-        "--problem", "-p",
-        dest="problem_flag",
-        help="The problem to solve (alternative to positional)"
+        "prompts",
+        nargs="*",
+        help="Prompt(s) to seed the pool (or inject on resume)"
     )
     parser.add_argument(
         "--max-iterations", "-n",
@@ -99,10 +95,11 @@ def main():
 
     args = parser.parse_args()
 
+    prompts = args.prompts or []
+
     # Handle resume vs fresh start
     if args.resume:
         # Resume from checkpoint
-        # First load to get current iteration
         try:
             reasoner = Reasoner.from_checkpoint(args.resume)
         except FileNotFoundError as e:
@@ -134,18 +131,17 @@ def main():
         print("=" * 60)
         print("WORKING MEMORY REASONER (RESUME)")
         print(f"Resuming from: {args.resume}")
+        if prompts:
+            print(f"Injecting {len(prompts)} new prompt(s)")
         print(f"Model: {reasoner.config.model}")
-        print("Pool state = output. No protocols.")
         print("=" * 60)
 
-        result = reasoner.continue_solving()
+        result = reasoner.continue_run(prompts if prompts else None)
     else:
-        # Fresh start
-        # Get problem from either source
-        problem = args.problem or args.problem_flag
-        if not problem:
+        # Fresh start - require at least one prompt
+        if not prompts:
             parser.print_help()
-            print("\nError: Please provide a problem to solve (or use --resume)")
+            print("\nError: Please provide at least one prompt (or use --resume)")
             sys.exit(1)
 
         # Configure
@@ -167,10 +163,9 @@ def main():
         print("=" * 60)
         print("WORKING MEMORY REASONER")
         print(f"Model: {config.model}")
-        print("Pool state = output. No protocols.")
         print("=" * 60)
 
-        result = reasoner.solve(problem)
+        result = reasoner.run(prompts)
 
     print("\n" + "=" * 60)
     print("RESULT")

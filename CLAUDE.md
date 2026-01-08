@@ -132,23 +132,25 @@ Coordinates rounds with real-time detection:
 
 Logosphere turned inward - pool-based thought ecology for reasoning:
 
-- **No protocols** - no `[ANSWER]` tags, no hardcoded markers
+- **Minimal protocols** - external prompts prefixed with `>>> ` (documented in system prompt)
 - **Pool state = output** - answer emerges from dominant cluster, not explicit declaration
 - **Resumable sessions** - checkpoint after each iteration, resume with `--resume`
 - **Per-iteration metrics** - diversity, cluster count, coherence tracked
 
 ```bash
-python scripts/run_reasoner.py "problem statement" -o ./out -n 10
-python scripts/run_reasoner.py --resume ./out -n 10  # adds 10 more iterations
-python scripts/run_reasoner.py --resume ./out        # adds 30 more (default)
+python scripts/run_reasoner.py "prompt" -o ./out -n 10
+python scripts/run_reasoner.py "first" "second" -o ./out     # multiple prompts
+python scripts/run_reasoner.py --resume ./out -n 10          # adds 10 more iterations
+python scripts/run_reasoner.py --resume ./out "new prompt"   # inject and continue
 ```
 
 **CLI notes:**
+- Multiple prompts can be provided (seeded as separate `>>> ` prefixed thoughts)
 - `-n` is additive on resume (adds iterations to current position)
+- Prompts can be injected on resume (appended to pool before continuing)
 - Early termination is off by default; use `--early-termination` to enable
-- Checkpoints saved after each iteration (survives interruption)
 
-**Philosophy:** Memes win by replication, not by declaring themselves important. If markers like `[IMPORTANT]` help, they'll emerge and spread naturally.
+**Philosophy:** Memes win by replication, not by declaring themselves important. The `>>> ` prefix is minimal metadata to distinguish external input from internal generation.
 
 ### Logging (src/core/logger.py)
 
