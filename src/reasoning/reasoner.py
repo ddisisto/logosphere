@@ -255,9 +255,6 @@ class Reasoner:
 
         return self._run_loop()
 
-    # Alias for backwards compatibility
-    solve = run
-
     def continue_run(self, prompts: list[str] | str | None = None) -> ReasoningResult:
         """
         Continue reasoning from current state (for resume).
@@ -294,9 +291,6 @@ class Reasoner:
 
         return self._run_loop()
 
-    # Alias for backwards compatibility
-    continue_solving = continue_run
-
     def _run_loop(self) -> ReasoningResult:
         """
         Core reasoning loop. Called by both solve() and continue_solving().
@@ -308,7 +302,7 @@ class Reasoner:
 
         while self.iteration < self.config.max_iterations:
             # Sample thoughts from working memory
-            thoughts = self.vector_db.sample_random(
+            thoughts, sampled_ids = self.vector_db.sample_with_ids(
                 self.config.k_samples,
                 from_active_pool=True
             )
@@ -334,7 +328,7 @@ class Reasoner:
                 thought = thought.strip()
                 if not thought:
                     continue
-                self._add_thought(thought, self.iteration)
+                self._add_thought(thought, self.iteration, sampled_ids)
                 thoughts_added += 1
                 if self.config.verbose:
                     preview = thought[:60] + "..." if len(thought) > 60 else thought
@@ -436,15 +430,24 @@ class Reasoner:
         # Save vector_db
         self.vector_db.save(self.config.output_dir / "vector_db")
 
-    def _add_thought(self, thought: str, iteration: int):
+    def _add_thought(
+        self,
+        thought: str,
+        iteration: int,
+        sampled_ids: list[int] | None = None
+    ):
         """Add thought to VectorDB with embedding."""
         embedding = self.embedding_client.embed_single(thought)
         if embedding is not None:
+            extra = {}
+            if sampled_ids is not None:
+                extra['sampled_ids'] = sampled_ids
             self.vector_db.add(
                 text=thought,
                 embedding=embedding,
                 round_num=iteration,
-                mind_id=0
+                mind_id=0,
+                extra_metadata=extra if extra else None
             )
 
     def _measure_dynamics(self, thoughts_added: int) -> IterationMetrics:

@@ -111,6 +111,34 @@ class VectorDB:
 
         return [self.metadata[i]['text'] for i in sampled_indices]
 
+    def sample_with_ids(
+        self, k: int, from_active_pool: bool = True
+    ) -> tuple[list[str], list[int]]:
+        """
+        Sample k messages and return both texts and vector_ids.
+
+        Args:
+            k: Number of messages to sample
+            from_active_pool: If True, sample from tail M only
+
+        Returns:
+            Tuple of (texts, vector_ids)
+        """
+        if from_active_pool:
+            indices = self._active_indices()
+        else:
+            indices = list(range(len(self.metadata)))
+
+        if len(indices) == 0:
+            return [], []
+
+        sample_size = min(k, len(indices))
+        sampled_indices = random.sample(indices, sample_size)
+
+        texts = [self.metadata[i]['text'] for i in sampled_indices]
+        ids = [self.metadata[i]['vector_id'] for i in sampled_indices]
+        return texts, ids
+
     def sample_weighted(self, k: int, weights: dict[int, float]) -> list[str]:
         """
         Weighted sampling from active pool.
