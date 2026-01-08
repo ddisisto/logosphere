@@ -7,6 +7,7 @@ No protocols. Pool state = output. Termination is dynamics-based.
 Usage:
     python scripts/run_reasoner.py "What is 23 + 47?"
     python scripts/run_reasoner.py --max-iterations 20 "problem here"
+    python scripts/run_reasoner.py --resume ./output_dir --max-iterations 100
 """
 
 import argparse
@@ -64,15 +65,15 @@ def main():
         help="Iterations of stable cluster count to terminate (default: 3)"
     )
     parser.add_argument(
-        "--no-early-termination",
+        "--early-termination",
         action="store_true",
-        help="Run all iterations, ignore convergence/stability"
+        help="Enable early termination on convergence/stability (default: off)"
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="anthropic/claude-haiku-4-5-20241022",
-        help="Model to use (default: anthropic/claude-haiku-4-5-20241022)"
+        default="anthropic/claude-haiku-4.5",
+        help="Model to use (default: anthropic/claude-haiku-4.5)"
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -90,39 +91,86 @@ def main():
         type=Path,
         help="Save VectorDB to this directory"
     )
+    parser.add_argument(
+        "--resume", "-r",
+        type=Path,
+        help="Resume from a prior run's output directory"
+    )
 
     args = parser.parse_args()
 
-    # Get problem from either source
-    problem = args.problem or args.problem_flag
-    if not problem:
-        parser.print_help()
-        print("\nError: Please provide a problem to solve")
-        sys.exit(1)
+    # Handle resume vs fresh start
+    if args.resume:
+        # Resume from checkpoint
+        # First load to get current iteration
+        try:
+            reasoner = Reasoner.from_checkpoint(args.resume)
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
 
-    # Configure
-    config = ReasonerConfig(
-        max_iterations=args.max_iterations,
-        k_samples=args.k_samples,
-        active_pool_size=args.pool_size,
-        convergence_threshold=args.convergence_threshold,
-        stability_window=args.stability_window,
-        no_early_termination=args.no_early_termination,
-        model=args.model,
-        verbose=not args.quiet,
-        output_dir=args.output_dir
-    )
+        # Build config overrides from CLI args
+        # -n is additive on resume: adds iterations to current position
+        overrides = {
+            "max_iterations": reasoner.iteration + args.max_iterations,
+            "no_early_termination": not args.early_termination,
+            "verbose": not args.quiet,
+        }
+        if args.k_samples != 5:
+            overrides["k_samples"] = args.k_samples
+        if args.pool_size != 50:
+            overrides["active_pool_size"] = args.pool_size
+        if args.convergence_threshold != 0.75:
+            overrides["convergence_threshold"] = args.convergence_threshold
+        if args.stability_window != 3:
+            overrides["stability_window"] = args.stability_window
+        if args.model != "anthropic/claude-haiku-4.5":
+            overrides["model"] = args.model
 
-    # Run
-    reasoner = Reasoner(config)
+        # Apply overrides
+        for key, value in overrides.items():
+            setattr(reasoner.config, key, value)
 
-    print("=" * 60)
-    print("WORKING MEMORY REASONER")
-    print(f"Model: {config.model}")
-    print("Pool state = output. No protocols.")
-    print("=" * 60)
+        print("=" * 60)
+        print("WORKING MEMORY REASONER (RESUME)")
+        print(f"Resuming from: {args.resume}")
+        print(f"Model: {reasoner.config.model}")
+        print("Pool state = output. No protocols.")
+        print("=" * 60)
 
-    result = reasoner.solve(problem)
+        result = reasoner.continue_solving()
+    else:
+        # Fresh start
+        # Get problem from either source
+        problem = args.problem or args.problem_flag
+        if not problem:
+            parser.print_help()
+            print("\nError: Please provide a problem to solve (or use --resume)")
+            sys.exit(1)
+
+        # Configure
+        config = ReasonerConfig(
+            max_iterations=args.max_iterations,
+            k_samples=args.k_samples,
+            active_pool_size=args.pool_size,
+            convergence_threshold=args.convergence_threshold,
+            stability_window=args.stability_window,
+            no_early_termination=not args.early_termination,
+            model=args.model,
+            verbose=not args.quiet,
+            output_dir=args.output_dir
+        )
+
+        # Run
+        reasoner = Reasoner(config)
+
+        print("=" * 60)
+        print("WORKING MEMORY REASONER")
+        print(f"Model: {config.model}")
+        print("Pool state = output. No protocols.")
+        print("=" * 60)
+
+        result = reasoner.solve(problem)
 
     print("\n" + "=" * 60)
     print("RESULT")
@@ -147,8 +195,8 @@ def main():
             print(f"{m.iteration:4d}  {m.num_clusters:8d}  {m.coherence:9.3f}  "
                   f"{m.diversity:9.3f}  {m.dominant_cluster_share:.3f}")
 
-    if args.output_dir:
-        print(f"\nSaved to: {args.output_dir}")
+    if reasoner.config.output_dir:
+        print(f"\nSaved to: {reasoner.config.output_dir}")
 
 
 if __name__ == "__main__":

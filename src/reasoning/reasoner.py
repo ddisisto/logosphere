@@ -8,9 +8,10 @@ Core philosophy: No explicit protocols. The pool state IS the output.
 - We measure and steer the pool, not the answers
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
+import json
 
 import numpy as np
 
@@ -27,8 +28,20 @@ Read them. Think privately. Transmit thoughts worth keeping.
 
 Transmitted thoughts persist and compete for attention.
 Thoughts not transmitted are forgotten.
+Thoughts should be largely self-contained, but may reference or include others.
+Thoughts may be retransmitted verbatim, and/or compressed, extended, decomposed, recomposed, etc.
 
-Format: Thoughts separated by --- on its own line."""
+Format: Thoughts (multi-line, unconstrained) separated by --- on its own line. e.g.
+
+```
+This is space for private thought and reasoning
+---
+This is the first transmitted thought
+---
+This is another
+---
+```
+"""
 
 
 @dataclass
@@ -127,10 +140,81 @@ class Reasoner:
         self.thinking_trace: list[str] = []
         self.metrics_history: list[IterationMetrics] = []
         self.cluster_history: list[int] = []  # Track cluster count for stability
+        self._problem: Optional[str] = None  # Stored for resume capability
+
+    @classmethod
+    def from_checkpoint(
+        cls,
+        output_dir: Path,
+        config_overrides: Optional[dict] = None
+    ) -> "Reasoner":
+        """
+        Load a Reasoner from a saved checkpoint.
+
+        Args:
+            output_dir: Directory containing state.json, metrics.jsonl, vector_db/
+            config_overrides: Optional dict to override loaded config values
+                             (e.g., {"max_iterations": 100} to extend)
+
+        Returns:
+            Reasoner instance with restored state
+        """
+        output_dir = Path(output_dir)
+        state_path = output_dir / "state.json"
+
+        if not state_path.exists():
+            raise FileNotFoundError(
+                f"Cannot resume: no state.json found in {output_dir}. "
+                "This run predates resume support or is incomplete."
+            )
+
+        state = json.loads(state_path.read_text())
+
+        # Restore config with overrides
+        saved_config = state["config"]
+        if config_overrides:
+            saved_config.update(config_overrides)
+
+        # Convert output_dir back to Path
+        saved_config["output_dir"] = output_dir
+
+        config = ReasonerConfig(**saved_config)
+
+        # Create instance (this initializes fresh components)
+        reasoner = cls(config)
+
+        # Restore iteration state
+        reasoner.iteration = state["iteration"]
+        reasoner.cluster_history = state["cluster_history"]
+        reasoner._problem = state["problem"]
+
+        # Restore metrics history
+        metrics_path = output_dir / "metrics.jsonl"
+        if metrics_path.exists():
+            with open(metrics_path) as f:
+                for line in f:
+                    reasoner.metrics_history.append(
+                        IterationMetrics(**json.loads(line))
+                    )
+
+        # Restore vector_db
+        vector_db_path = output_dir / "vector_db"
+        if vector_db_path.exists():
+            reasoner.vector_db = VectorDB.load(
+                vector_db_path,
+                active_pool_size=config.active_pool_size
+            )
+            # Reconnect attractor detector to loaded VectorDB
+            reasoner.attractor_detector = AttractorDetector(
+                vector_db=reasoner.vector_db,
+                min_cluster_size=config.min_cluster_size
+            )
+
+        return reasoner
 
     def solve(self, problem: str) -> ReasoningResult:
         """
-        Run reasoning loop. Terminates on dynamics, not protocols.
+        Run reasoning loop from fresh start. Terminates on dynamics, not protocols.
 
         Args:
             problem: The problem statement (seeded into pool)
@@ -139,6 +223,7 @@ class Reasoner:
             ReasoningResult with pool state and trajectory
         """
         self._reset()
+        self._problem = problem
 
         # Seed pool with problem
         self._add_thought(f"Problem: {problem}", iteration=-1)
@@ -148,6 +233,36 @@ class Reasoner:
             print(f"Max iterations: {self.config.max_iterations}")
             print("-" * 40)
 
+        return self._run_loop()
+
+    def continue_solving(self) -> ReasoningResult:
+        """
+        Continue reasoning from current state (for resume).
+
+        Use this after loading from checkpoint to continue iterations.
+
+        Returns:
+            ReasoningResult with pool state and trajectory
+        """
+        if self._problem is None:
+            raise ValueError("Cannot continue: no problem loaded. Use solve() or from_checkpoint() first.")
+
+        if self.config.verbose:
+            print(f"Resuming: {self._problem}")
+            print(f"Current iteration: {self.iteration}")
+            print(f"Max iterations: {self.config.max_iterations}")
+            print(f"Pool size: {self.vector_db.size()}")
+            print("-" * 40)
+
+        return self._run_loop()
+
+    def _run_loop(self) -> ReasoningResult:
+        """
+        Core reasoning loop. Called by both solve() and continue_solving().
+
+        Returns:
+            ReasoningResult with pool state and trajectory
+        """
         termination_reason = "timeout"
 
         while self.iteration < self.config.max_iterations:
@@ -188,6 +303,9 @@ class Reasoner:
             metrics = self._measure_dynamics(thoughts_added)
             self.metrics_history.append(metrics)
 
+            # Checkpoint after each iteration
+            self._save_checkpoint()
+
             if self.config.verbose:
                 print(f"  [metrics] clusters={metrics.num_clusters}, "
                       f"coherence={metrics.coherence:.2f}, "
@@ -199,6 +317,7 @@ class Reasoner:
                 termination_reason = term
                 if self.config.verbose:
                     print(f"\n[TERMINATED: {term}]")
+                self.iteration += 1  # Mark this iteration as complete before saving
                 break
 
             self.iteration += 1
@@ -207,9 +326,8 @@ class Reasoner:
         dominant_texts = self._extract_dominant_cluster()
         final_state = self.attractor_detector.detect(self.iteration)
 
-        # Save if output_dir specified
-        if self.config.output_dir:
-            self.vector_db.save(self.config.output_dir / "vector_db")
+        # Final checkpoint
+        self._save_checkpoint()
 
         return ReasoningResult(
             termination_reason=termination_reason,
@@ -236,6 +354,46 @@ class Reasoner:
         self.thinking_trace = []
         self.metrics_history = []
         self.cluster_history = []
+        self._problem = None
+
+    def _save_checkpoint(self):
+        """Save full state for resume capability."""
+        if not self.config.output_dir:
+            return
+
+        self.config.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # state.json - core counters and config
+        # Convert config to dict, handling Path serialization
+        config_dict = asdict(self.config)
+        if config_dict.get('output_dir'):
+            config_dict['output_dir'] = str(config_dict['output_dir'])
+
+        state = {
+            "iteration": self.iteration,
+            "cluster_history": self.cluster_history,
+            "config": config_dict,
+            "problem": self._problem,
+        }
+        (self.config.output_dir / "state.json").write_text(
+            json.dumps(state, indent=2)
+        )
+
+        # metrics.jsonl - full history
+        # Convert numpy types to Python native for JSON serialization
+        def to_native(obj):
+            if isinstance(obj, dict):
+                return {k: to_native(v) for k, v in obj.items()}
+            elif isinstance(obj, (np.floating, np.integer)):
+                return float(obj) if isinstance(obj, np.floating) else int(obj)
+            return obj
+
+        with open(self.config.output_dir / "metrics.jsonl", "w") as f:
+            for m in self.metrics_history:
+                f.write(json.dumps(to_native(asdict(m))) + "\n")
+
+        # Save vector_db
+        self.vector_db.save(self.config.output_dir / "vector_db")
 
     def _add_thought(self, thought: str, iteration: int):
         """Add thought to VectorDB with embedding."""

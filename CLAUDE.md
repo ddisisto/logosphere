@@ -134,17 +134,21 @@ Logosphere turned inward - pool-based thought ecology for reasoning:
 
 - **No protocols** - no `[ANSWER]` tags, no hardcoded markers
 - **Pool state = output** - answer emerges from dominant cluster, not explicit declaration
-- **Dynamics-based termination** - convergence, stability, or timeout
+- **Resumable sessions** - checkpoint after each iteration, resume with `--resume`
 - **Per-iteration metrics** - diversity, cluster count, coherence tracked
 
-```python
-python scripts/run_reasoner.py "What is 23 + 47?"
-python scripts/run_reasoner.py --model anthropic/claude-sonnet-4-20250514 --no-early-termination "problem"
+```bash
+python scripts/run_reasoner.py "problem statement" -o ./out -n 10
+python scripts/run_reasoner.py --resume ./out -n 10  # adds 10 more iterations
+python scripts/run_reasoner.py --resume ./out        # adds 30 more (default)
 ```
 
-**Philosophy:** Memes win by replication, not by declaring themselves important. If markers like `[IMPORTANT]` help, they'll emerge and spread naturally.
+**CLI notes:**
+- `-n` is additive on resume (adds iterations to current position)
+- Early termination is off by default; use `--early-termination` to enable
+- Checkpoints saved after each iteration (survives interruption)
 
-See `docs/working-memory-reasoner.md` for full plan.
+**Philosophy:** Memes win by replication, not by declaring themselves important. If markers like `[IMPORTANT]` help, they'll emerge and spread naturally.
 
 ### Logging (src/core/logger.py)
 
@@ -323,6 +327,7 @@ This makes the pool the "culture" - the collective memory that evolves.
 - VectorDB for similarity search (replaces Pool)
 - Attractor detection via HDBSCAN clustering
 - Working Memory Reasoner (pool-based thought ecology)
+- Resumable reasoning sessions (checkpoint/restore)
 - Real-time dynamics tracking (diversity, coherence, clusters)
 
 **Potential experiments:**
