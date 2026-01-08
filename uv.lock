@@ -375,6 +375,7 @@ name = "logosphere"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "pytest" },
     { name = "requests" },
 ]
 
@@ -394,6 +395,7 @@ requires-dist = [
     { name = "hdbscan", marker = "extra == 'analysis'", specifier = ">=0.8.33" },
     { name = "matplotlib", marker = "extra == 'analysis'", specifier = ">=3.8.0" },
     { name = "numpy", marker = "extra == 'analysis'", specifier = ">=1.26.0" },
+    { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
     { name = "scikit-learn", marker = "extra == 'analysis'", specifier = ">=1.4.0" },
