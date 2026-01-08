@@ -157,6 +157,9 @@ class SnapshotStore:
         self._index["lineage"][snapshot_id] = parent_id
         self._save_index()
 
+        # Update head symlink
+        self._update_head(snapshot_id)
+
         return snapshot
 
     def load(self, snapshot_id: str, active_pool_size: int = 50) -> VectorDB:
@@ -266,3 +269,19 @@ class SnapshotStore:
             return None
         # Snapshots are appended in order, so last is newest
         return Snapshot.from_dict(self._index["snapshots"][-1])
+
+    def _update_head(self, snapshot_id: str) -> None:
+        """Update 'head' symlink to point to latest snapshot."""
+        head_path = self.base_dir / "head"
+
+        # Remove existing symlink if present
+        if head_path.is_symlink():
+            head_path.unlink()
+        elif head_path.exists():
+            # Not a symlink but exists - don't touch it
+            return
+
+        # Create symlink to snapshot directory
+        snapshot_dir = self.base_dir / snapshot_id
+        if snapshot_dir.exists():
+            head_path.symlink_to(snapshot_id)  # Relative symlink
