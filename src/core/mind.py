@@ -4,9 +4,35 @@ Mind invocation and message parsing for Logosphere experiment.
 Each Mind is a single stateless API call.
 """
 
+import os
 import requests
-from .. import config
-from ..config import API_KEY, MODEL, API_BASE_URL, DELIMITER, TOKEN_LIMIT
+from pathlib import Path
+
+# Message delimiter
+DELIMITER = "---"
+
+# API defaults
+API_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
+DEFAULT_TOKEN_LIMIT = 4000
+
+
+def _load_api_key() -> str:
+    """Load API key from environment or .env file."""
+    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API")
+    if key:
+        return key
+    env_path = Path(__file__).parent.parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("OPENROUTER_API"):
+                    if ":" in line:
+                        return line.split(":", 1)[1].strip()
+                    elif "=" in line:
+                        return line.split("=", 1)[1].strip()
+    raise ValueError("API key not found. Set OPENROUTER_API_KEY env var or add to .env")
 
 
 def format_input(system_prompt: str, messages: list[str]) -> str:
@@ -71,8 +97,9 @@ def parse_output(raw: str) -> tuple[str, list[str]]:
 def invoke_mind(
     system_prompt: str,
     messages: list[str],
-    token_limit: int = TOKEN_LIMIT,
-    model: str = None
+    token_limit: int = DEFAULT_TOKEN_LIMIT,
+    model: str = None,
+    api_key: str = None,
 ) -> dict:
     """
     Invoke LLM Mind with formatted input.
@@ -81,7 +108,8 @@ def invoke_mind(
         system_prompt: System-level framing
         messages: Sampled messages from pool
         token_limit: Maximum tokens for generation
-        model: Model to use (default: from config)
+        model: Model to use (default: claude-haiku-4.5)
+        api_key: API key (default: from env or .env file)
 
     Returns:
         {
@@ -97,14 +125,17 @@ def invoke_mind(
     # Format input
     formatted_input = format_input(system_prompt, messages)
 
+    # Get API key
+    key = api_key or _load_api_key()
+
     # Prepare API request
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json"
     }
 
     payload = {
-        "model": model or MODEL,
+        "model": model or DEFAULT_MODEL,
         "messages": [
             {"role": "user", "content": formatted_input}
         ],

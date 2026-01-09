@@ -2,12 +2,46 @@
 Configuration for Logos reasoning sessions.
 """
 
+import os
 from dataclasses import dataclass, field, asdict
+from pathlib import Path
 from typing import Optional
 
-from src.core.session import EXTERNAL_PROMPT_PREFIX
+__all__ = [
+    "LogosConfig",
+    "DEFAULT_SYSTEM_PROMPT",
+    "EXTERNAL_PROMPT_PREFIX",
+    "load_api_key",
+    "API_BASE_URL",
+]
 
-__all__ = ["LogosConfig", "DEFAULT_SYSTEM_PROMPT", "EXTERNAL_PROMPT_PREFIX"]
+# External messages (injected/seeded) get this prefix
+EXTERNAL_PROMPT_PREFIX = ">>> "
+
+
+def load_api_key() -> str:
+    """Load API key from environment or .env file."""
+    # Try environment variable first
+    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API")
+    if key:
+        return key
+
+    # Fall back to .env file
+    env_path = Path(__file__).parent.parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("OPENROUTER_API"):
+                    # Handle both KEY:value and KEY=value formats
+                    if ":" in line:
+                        return line.split(":", 1)[1].strip()
+                    elif "=" in line:
+                        return line.split("=", 1)[1].strip()
+    raise ValueError("API key not found. Set OPENROUTER_API_KEY env var or add to .env")
+
+
+API_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 # Default system prompt - minimal framing

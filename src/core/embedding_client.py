@@ -8,7 +8,28 @@ import numpy as np
 import requests
 from typing import Optional
 
-from ..config import API_KEY, API_BASE_URL
+# Import directly from module to avoid circular import via logos.__init__
+import os
+from pathlib import Path
+
+def _load_api_key() -> str:
+    """Load API key from environment or .env file."""
+    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API")
+    if key:
+        return key
+    env_path = Path(__file__).parent.parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("OPENROUTER_API"):
+                    if ":" in line:
+                        return line.split(":", 1)[1].strip()
+                    elif "=" in line:
+                        return line.split("=", 1)[1].strip()
+    raise ValueError("API key not found. Set OPENROUTER_API_KEY env var or add to .env")
+
+API_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 class EmbeddingAPIError(Exception):
@@ -45,7 +66,7 @@ class EmbeddingClient:
             enabled: If False, embed_batch returns None (for testing without API)
         """
         self.model = model
-        self.api_key = api_key or API_KEY
+        self.api_key = api_key or _load_api_key()
         self.api_base_url = api_base_url or API_BASE_URL
         self.enabled = enabled
 
