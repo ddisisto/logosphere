@@ -34,12 +34,18 @@ class Branch:
     parent: Optional[str]  # Parent branch name
     parent_iteration: Optional[int]  # Iteration we branched at
     parent_vector_id: Optional[int] = None  # If set, filter by vector_id instead of round
+    config: dict = None  # Branch-specific config (inherited from parent on creation)
+
+    def __post_init__(self):
+        if self.config is None:
+            self.config = {}
 
     def to_dict(self) -> dict:
         d = {
             "name": self.name,
             "parent": self.parent,
             "parent_iteration": self.parent_iteration,
+            "config": self.config,
         }
         if self.parent_vector_id is not None:
             d["parent_vector_id"] = self.parent_vector_id
@@ -77,7 +83,6 @@ class Session:
         self.branches: dict[str, Branch] = {}
         self.current_branch: str = "main"
         self.iteration: int = 0
-        self.config: dict = {}
 
         # Intervention log (optional, for audit)
         self.intervention_log = InterventionLog(self.session_dir / "interventions.jsonl")
@@ -103,11 +108,11 @@ class Session:
                 name="main",
                 parent=None,
                 parent_iteration=None,
+                config={},
             )
         }
         self.current_branch = "main"
         self.iteration = 0
-        self.config = {}
 
         self._save()
 
@@ -119,11 +124,15 @@ class Session:
 
         self.current_branch = data["current"]
         self.iteration = data["iteration"]
-        self.config = data.get("config", {})
         self.branches = {
             name: Branch.from_dict(b)
             for name, b in data["branches"].items()
         }
+
+        # Migrate session-level config to main branch if needed
+        session_config = data.get("config", {})
+        if session_config and not self.branches["main"].config:
+            self.branches["main"].config = session_config
 
         # Load VectorDB
         if self._vector_db_path.exists():
@@ -141,11 +150,10 @@ class Session:
         """Save session to disk."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save branches
+        # Save branches (config now stored per-branch)
         data = {
             "current": self.current_branch,
             "iteration": self.iteration,
-            "config": self.config,
             "branches": {
                 name: b.to_dict()
                 for name, b in self.branches.items()
@@ -161,6 +169,16 @@ class Session:
     def current(self) -> Branch:
         """Current branch object."""
         return self.branches[self.current_branch]
+
+    @property
+    def config(self) -> dict:
+        """Current branch's config."""
+        return self.current.config
+
+    @config.setter
+    def config(self, value: dict) -> None:
+        """Set current branch's config."""
+        self.current.config = value
 
     def get_visible_ids(self) -> set[int]:
         """Get all vector_ids visible to current branch."""
@@ -275,12 +293,13 @@ class Session:
             parent_iteration = self.iteration
             parent_vector_id = None
 
-        # Create new branch
+        # Create new branch (inherit parent's config)
         new_branch = Branch(
             name=name,
             parent=self.current_branch,
             parent_iteration=parent_iteration,
             parent_vector_id=parent_vector_id,
+            config=self.config.copy(),  # Copy parent's config
         )
         self.branches[name] = new_branch
 

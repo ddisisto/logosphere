@@ -264,6 +264,42 @@ def cmd_list(args):
     return 0
 
 
+def cmd_config(args):
+    """Show or set branch config."""
+    import json as json_mod
+    session_dir = get_current_session_dir()
+    session = Session(session_dir)
+
+    if args.json:
+        # Output as JSON
+        print(json_mod.dumps(session.config, indent=2))
+    elif args.set:
+        # Set key=value
+        for kv in args.set:
+            if '=' not in kv:
+                print(f"Invalid format: {kv} (expected key=value)")
+                return 1
+            key, value = kv.split('=', 1)
+            # Try to parse as JSON for numbers/bools
+            try:
+                value = json_mod.loads(value)
+            except json_mod.JSONDecodeError:
+                pass  # Keep as string
+            session.config[key] = value
+        session._save()
+        print(f"Config updated for branch '{session.current_branch}'")
+    else:
+        # Pretty print
+        print(f"Config for branch '{session.current_branch}':")
+        if not session.config:
+            print("  (empty - will use defaults)")
+        else:
+            for key, value in sorted(session.config.items()):
+                print(f"  {key}: {value}")
+
+    return 0
+
+
 def cmd_log(args):
     """Show intervention log."""
     session_dir = get_current_session_dir()
@@ -337,6 +373,12 @@ def main():
     # list
     p_list = subparsers.add_parser("list", help="List all branches")
 
+    # config
+    p_config = subparsers.add_parser("config", help="Show or set branch config")
+    p_config.add_argument("--set", nargs="+", metavar="KEY=VALUE",
+                          help="Set config values (e.g., --set model=anthropic/claude-haiku-4.5)")
+    p_config.add_argument("--json", action="store_true", help="Output as JSON")
+
     # log
     p_log = subparsers.add_parser("log", help="Show intervention log")
     p_log.add_argument("--limit", type=int, default=20, help="Max entries")
@@ -358,6 +400,7 @@ def main():
         "switch": cmd_switch,
         "status": cmd_status,
         "list": cmd_list,
+        "config": cmd_config,
         "log": cmd_log,
     }
 

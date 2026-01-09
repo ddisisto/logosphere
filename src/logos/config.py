@@ -24,14 +24,12 @@ Incoming prompts from external sources are prefixed with '>>> '.
 
 Format: Thoughts (multi-line, unconstrained) separated by --- on its own line. e.g.
 
-```
-This is space for private thought and reasoning
+This and all above is space for private thought and reasoning
 ---
 This is the first transmitted thought
 ---
 This is another
 ---
-```
 """
 
 
