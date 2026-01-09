@@ -133,15 +133,6 @@ class Session:
             for name, b in data["branches"].items()
         }
 
-        # Migrate legacy session-level iteration to current branch if needed
-        if "iteration" in data and self.current.iteration == 0:
-            self.current.iteration = data["iteration"]
-
-        # Migrate session-level config to main branch if needed
-        session_config = data.get("config", {})
-        if session_config and not self.branches["main"].config:
-            self.branches["main"].config = session_config
-
         # Load VectorDB
         if self._vector_db_path.exists():
             self.vector_db = VectorDB.load(

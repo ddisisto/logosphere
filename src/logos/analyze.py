@@ -222,14 +222,16 @@ def compute_cluster_timeline(
     session,  # Session object (avoid circular import)
     min_cluster_size: int = 3,
     centroid_match_threshold: float = 0.3,
+    start_iteration: Optional[int] = None,
+    end_iteration: Optional[int] = None,
     verbose: bool = True,
 ) -> ClusterTimeline:
     """
     Retroactively compute cluster evolution for a session's current branch.
 
     Algorithm:
-    1. Get max_iteration from session
-    2. For each iteration i in 0..max_iteration:
+    1. Determine iteration range (start to end)
+    2. For each iteration i in range:
        a. Get messages visible to current branch at iteration i
        b. Get embeddings for those messages
        c. Run HDBSCAN clustering
@@ -241,6 +243,8 @@ def compute_cluster_timeline(
         session: Logos Session object
         min_cluster_size: Minimum points to form a cluster
         centroid_match_threshold: Max cosine distance to consider clusters "same"
+        start_iteration: First iteration to analyze (default: 0)
+        end_iteration: Last iteration to analyze (default: branch's current iteration)
         verbose: Print progress
 
     Returns:
@@ -252,12 +256,35 @@ def compute_cluster_timeline(
     vector_db = session.vector_db
     branch_name = session.current_branch
 
-    # Use the branch's iteration directly - this is the authoritative count
-    # for this branch's timeline, regardless of parent message round numbers
-    max_iteration = session.iteration
+    # Compute actual max round from visible messages
+    visible_ids = session.get_visible_ids()
+    actual_max_round = 0
+    for vid in visible_ids:
+        meta = vector_db.get_message(vid)
+        if meta:
+            actual_max_round = max(actual_max_round, meta.get('round', 0))
+
+    # Warn about inconsistent iteration counter (iteration should be max_round + 1)
+    expected_iteration = actual_max_round + 1
+    if session.iteration != expected_iteration and verbose:
+        print(f"Warning: Branch '{branch_name}' iteration counter ({session.iteration}) "
+              f"doesn't match expected ({expected_iteration}). "
+              f"Data may need repair.")
+
+    # Determine iteration range
+    min_iter = start_iteration if start_iteration is not None else 0
+    max_iter = end_iteration if end_iteration is not None else actual_max_round
+
+    # Validate range
+    if min_iter < 0:
+        min_iter = 0
+    if max_iter > actual_max_round:
+        max_iter = actual_max_round
+    if min_iter > max_iter:
+        min_iter, max_iter = max_iter, min_iter
 
     if verbose:
-        print(f"Computing cluster timeline for branch '{branch_name}' iterations 0-{max_iteration}...")
+        print(f"Computing cluster timeline for branch '{branch_name}' iterations {min_iter}-{max_iter}...")
 
     # Build lookup for embeddings by vector_id
     embeddings_by_vid = {}
@@ -274,12 +301,12 @@ def compute_cluster_timeline(
     # Track clusters across iterations
     tracked_clusters: dict[str, TrackedCluster] = {}
     next_cluster_id = 0
-    iterations = list(range(max_iteration + 1))
+    iterations = list(range(min_iter, max_iter + 1))
 
     # Previous iteration's cluster centroids for matching
     prev_centroids: dict[str, np.ndarray] = {}
 
-    for iteration in iterations:
+    for idx, iteration in enumerate(iterations):
         # Get visible IDs for current branch at this iteration
         visible_ids = session._get_branch_visible_ids(branch_name, up_to_round=iteration)
 
@@ -373,8 +400,8 @@ def compute_cluster_timeline(
                 new_id = f"cluster_{next_cluster_id}"
                 next_cluster_id += 1
 
-                # Backfill sizes with 0 for previous iterations
-                sizes = [0] * iteration + [cluster_info['size']]
+                # Backfill sizes with 0 for previous iterations in our range
+                sizes = [0] * idx + [cluster_info['size']]
 
                 tracked_clusters[new_id] = TrackedCluster(
                     id=new_id,
@@ -388,7 +415,7 @@ def compute_cluster_timeline(
 
         # Record zero for clusters not seen this iteration
         for tracked_id, cluster in tracked_clusters.items():
-            if tracked_id not in matched_tracked and len(cluster.sizes) <= iteration:
+            if tracked_id not in matched_tracked and len(cluster.sizes) <= idx:
                 cluster.sizes.append(0)
 
         # Update prev_centroids for next iteration (keep all clusters, not just alive ones)
@@ -409,7 +436,7 @@ def compute_cluster_timeline(
     clusters = sorted(tracked_clusters.values(), key=lambda c: c.first_seen)
 
     # Compute total messages at final iteration (visible to current branch)
-    final_visible_ids = session._get_branch_visible_ids(branch_name, up_to_round=max_iteration)
+    final_visible_ids = session._get_branch_visible_ids(branch_name, up_to_round=max_iter)
     total_messages = len(final_visible_ids)
 
     if verbose:

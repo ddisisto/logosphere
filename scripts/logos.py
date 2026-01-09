@@ -335,6 +335,8 @@ def cmd_analyze(args):
                 session,
                 min_cluster_size=args.min_cluster_size,
                 centroid_match_threshold=args.centroid_threshold,
+                start_iteration=args.start_iter,
+                end_iteration=args.end_iter,
                 verbose=not args.quiet,
             )
         except ImportError as e:
@@ -421,6 +423,10 @@ def main():
                            help="Minimum cluster size for HDBSCAN (default: 3)")
     p_analyze.add_argument("--centroid-threshold", type=float, default=0.3,
                            help="Max cosine distance to match clusters across iterations (default: 0.3)")
+    p_analyze.add_argument("--from", type=int, dest="start_iter", default=None,
+                           help="Start iteration (default: 0)")
+    p_analyze.add_argument("--to", type=int, dest="end_iter", default=None,
+                           help="End iteration (default: branch's current iteration)")
     p_analyze.add_argument("--quiet", "-q", action="store_true",
                            help="Suppress progress output")
 
