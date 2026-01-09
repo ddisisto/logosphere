@@ -189,15 +189,22 @@ def cmd_inject(args):
 
 
 def cmd_branch(args):
-    """Create a new branch from current state."""
+    """Create a new branch from current state or historical point."""
     session_dir = get_current_session_dir()
     session = Session(session_dir)
 
     old_branch = session.current_branch
-    new_branch = session.branch(args.name)
+    from_vector_id = args.vector_id
 
-    print(f"Branched '{old_branch}' -> '{new_branch}' at iteration {session.iteration}")
-    print(f"Now on branch: {new_branch}")
+    new_branch = session.branch(args.name, from_vector_id=from_vector_id)
+
+    if from_vector_id is not None:
+        print(f"Branched '{old_branch}' -> '{new_branch}' from vector_id {from_vector_id}")
+    else:
+        print(f"Branched '{old_branch}' -> '{new_branch}' at iteration {session.iteration}")
+
+    visible = len(session.get_visible_ids())
+    print(f"Now on branch: {new_branch} ({visible} visible messages)")
 
     return 0
 
@@ -317,6 +324,8 @@ def main():
     # branch
     p_branch = subparsers.add_parser("branch", help="Create new branch from current state")
     p_branch.add_argument("name", help="New branch name")
+    p_branch.add_argument("-v", "--vector-id", type=int, dest="vector_id",
+                          help="Branch from specific vector_id instead of current state")
 
     # switch
     p_switch = subparsers.add_parser("switch", help="Switch to existing branch")

@@ -33,13 +33,17 @@ class Branch:
     name: str
     parent: Optional[str]  # Parent branch name
     parent_iteration: Optional[int]  # Iteration we branched at
+    parent_vector_id: Optional[int] = None  # If set, filter by vector_id instead of round
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "name": self.name,
             "parent": self.parent,
             "parent_iteration": self.parent_iteration,
         }
+        if self.parent_vector_id is not None:
+            d["parent_vector_id"] = self.parent_vector_id
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> Branch:
@@ -162,8 +166,13 @@ class Session:
         """Get all vector_ids visible to current branch."""
         return self._get_branch_visible_ids(self.current_branch, None)
 
-    def _get_branch_visible_ids(self, branch_name: str, up_to_round: Optional[int]) -> set[int]:
-        """Get IDs visible to a branch, optionally filtered by round."""
+    def _get_branch_visible_ids(
+        self,
+        branch_name: str,
+        up_to_round: Optional[int] = None,
+        up_to_vector_id: Optional[int] = None,
+    ) -> set[int]:
+        """Get IDs visible to a branch, optionally filtered by round or vector_id."""
         visible = set()
         branch = self.branches.get(branch_name)
         if not branch:
@@ -173,15 +182,25 @@ class Session:
         for vid in range(self.vector_db.size()):
             meta = self.vector_db.get_message(vid)
             if meta and meta.get('branch') == branch_name:
-                if up_to_round is None or meta.get('round', 0) <= up_to_round:
+                # Apply filters
+                if up_to_vector_id is not None:
+                    if vid <= up_to_vector_id:
+                        visible.add(vid)
+                elif up_to_round is None or meta.get('round', 0) <= up_to_round:
                     visible.add(vid)
 
         # Add inherited IDs from parent (up to branch point)
-        if branch.parent and branch.parent_iteration is not None:
-            effective_round = branch.parent_iteration
-            if up_to_round is not None:
-                effective_round = min(effective_round, up_to_round)
-            visible.update(self._get_branch_visible_ids(branch.parent, effective_round))
+        if branch.parent:
+            # Use vector_id filter if set, otherwise use round filter
+            if branch.parent_vector_id is not None:
+                visible.update(self._get_branch_visible_ids(
+                    branch.parent, up_to_vector_id=branch.parent_vector_id
+                ))
+            elif branch.parent_iteration is not None:
+                effective_round = branch.parent_iteration
+                if up_to_round is not None:
+                    effective_round = min(effective_round, up_to_round)
+                visible.update(self._get_branch_visible_ids(branch.parent, up_to_round=effective_round))
 
         return visible
 
@@ -229,12 +248,13 @@ class Session:
         )
         return vector_id
 
-    def branch(self, name: str) -> str:
+    def branch(self, name: str, from_vector_id: Optional[int] = None) -> str:
         """
-        Create new branch from current state.
+        Create new branch from current state or historical point.
 
         Args:
             name: New branch name
+            from_vector_id: If set, branch from this vector_id instead of current state
 
         Returns:
             Name of created branch
@@ -242,22 +262,40 @@ class Session:
         if name in self.branches:
             raise ValueError(f"Branch '{name}' already exists")
 
+        # Determine branch point
+        if from_vector_id is not None:
+            # Branch from specific vector_id
+            meta = self.vector_db.get_message(from_vector_id)
+            if meta is None:
+                raise ValueError(f"Vector ID {from_vector_id} not found")
+            parent_iteration = meta.get('round', 0)
+            parent_vector_id = from_vector_id
+        else:
+            # Branch from current state
+            parent_iteration = self.iteration
+            parent_vector_id = None
+
         # Create new branch
         new_branch = Branch(
             name=name,
             parent=self.current_branch,
-            parent_iteration=self.iteration,
+            parent_iteration=parent_iteration,
+            parent_vector_id=parent_vector_id,
         )
         self.branches[name] = new_branch
 
         # Log intervention
+        content = {
+            "from_branch": self.current_branch,
+            "to_branch": name,
+            "at_iteration": parent_iteration,
+        }
+        if parent_vector_id is not None:
+            content["at_vector_id"] = parent_vector_id
+
         self.intervention_log.record(
             intervention_type=INTERVENTION_BRANCH,
-            content={
-                "from_branch": self.current_branch,
-                "to_branch": name,
-                "at_iteration": self.iteration,
-            },
+            content=content,
             snapshot_before=self.current_branch,
             snapshot_after=name,
         )
