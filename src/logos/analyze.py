@@ -225,12 +225,12 @@ def compute_cluster_timeline(
     verbose: bool = True,
 ) -> ClusterTimeline:
     """
-    Retroactively compute cluster evolution for a session.
+    Retroactively compute cluster evolution for a session's current branch.
 
     Algorithm:
     1. Get max_iteration from session
     2. For each iteration i in 0..max_iteration:
-       a. Filter messages to those with round <= i
+       a. Get messages visible to current branch at iteration i
        b. Get embeddings for those messages
        c. Run HDBSCAN clustering
        d. Match clusters to previous iteration by centroid proximity
@@ -250,24 +250,30 @@ def compute_cluster_timeline(
         raise ImportError("hdbscan not installed. Run: pip install hdbscan")
 
     vector_db = session.vector_db
-    max_iteration = session.iteration
+    branch_name = session.current_branch
+
+    # Compute max iteration for this branch based on visible messages
+    visible_ids = session.get_visible_ids()
+    max_iteration = 0
+    for vid in visible_ids:
+        meta = vector_db.get_message(vid)
+        if meta:
+            max_iteration = max(max_iteration, meta.get('round', 0))
 
     if verbose:
-        print(f"Computing cluster timeline for iterations 0-{max_iteration}...")
+        print(f"Computing cluster timeline for branch '{branch_name}' iterations 0-{max_iteration}...")
 
-    # Get all message data
-    all_embeddings = []
-    all_metadata = []
+    # Build lookup for embeddings by vector_id
+    embeddings_by_vid = {}
+    metadata_by_vid = {}
     for vid in range(vector_db.size()):
         meta = vector_db.get_message(vid)
         if meta:
-            all_metadata.append(meta)
-            all_embeddings.append(vector_db.embeddings[vid])
+            metadata_by_vid[vid] = meta
+            embeddings_by_vid[vid] = vector_db.embeddings[vid]
 
-    if not all_embeddings:
+    if not embeddings_by_vid:
         return ClusterTimeline(iterations=[], clusters=[], total_messages=0)
-
-    all_embeddings = np.array(all_embeddings)
 
     # Track clusters across iterations
     tracked_clusters: dict[str, TrackedCluster] = {}
@@ -278,10 +284,25 @@ def compute_cluster_timeline(
     prev_centroids: dict[str, np.ndarray] = {}
 
     for iteration in iterations:
-        # Filter to messages at or before this iteration
-        mask = np.array([m.get('round', 0) <= iteration for m in all_metadata])
-        iter_embeddings = all_embeddings[mask]
-        iter_metadata = [m for m, keep in zip(all_metadata, mask) if keep]
+        # Get visible IDs for current branch at this iteration
+        visible_ids = session._get_branch_visible_ids(branch_name, up_to_round=iteration)
+
+        # Get embeddings and metadata for visible messages
+        iter_embeddings = []
+        iter_metadata = []
+        for vid in sorted(visible_ids):
+            if vid in embeddings_by_vid:
+                iter_embeddings.append(embeddings_by_vid[vid])
+                iter_metadata.append(metadata_by_vid[vid])
+
+        if not iter_embeddings:
+            for cluster in tracked_clusters.values():
+                cluster.sizes.append(0)
+            if verbose and iteration % 10 == 0:
+                print(f"  Iteration {iteration}: 0 msgs, 0 clusters")
+            continue
+
+        iter_embeddings = np.array(iter_embeddings)
 
         if len(iter_embeddings) < min_cluster_size:
             # Not enough data - record zero sizes for all tracked clusters
@@ -391,8 +412,9 @@ def compute_cluster_timeline(
     # Sort clusters by first_seen
     clusters = sorted(tracked_clusters.values(), key=lambda c: c.first_seen)
 
-    # Compute total messages at final iteration
-    total_messages = sum(1 for m in all_metadata if m.get('round', 0) <= max_iteration)
+    # Compute total messages at final iteration (visible to current branch)
+    final_visible_ids = session._get_branch_visible_ids(branch_name, up_to_round=max_iteration)
+    total_messages = len(final_visible_ids)
 
     if verbose:
         print(f"Done. Found {len(clusters)} clusters across {len(iterations)} iterations.")
