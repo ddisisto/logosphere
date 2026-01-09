@@ -217,19 +217,25 @@ class Session:
         for vid in range(self.vector_db.size()):
             meta = self.vector_db.get_message(vid)
             if meta and meta.get('branch') == branch_name:
-                # Apply filters
-                if up_to_vector_id is not None:
-                    if vid <= up_to_vector_id:
-                        visible.add(vid)
-                elif up_to_round is None or meta.get('round', 0) <= up_to_round:
+                # Apply filters - both must pass if present
+                passes_vid = up_to_vector_id is None or vid <= up_to_vector_id
+                passes_round = up_to_round is None or meta.get('round', 0) <= up_to_round
+                if passes_vid and passes_round:
                     visible.add(vid)
 
         # Add inherited IDs from parent (up to branch point)
         if branch.parent:
             # Use vector_id filter if set, otherwise use round filter
             if branch.parent_vector_id is not None:
+                # Take minimum of passed constraint and branch's own parent_vector_id
+                # This ensures child branch constraints propagate through the chain
+                effective_vid = branch.parent_vector_id
+                if up_to_vector_id is not None:
+                    effective_vid = min(effective_vid, up_to_vector_id)
                 visible.update(self._get_branch_visible_ids(
-                    branch.parent, up_to_vector_id=branch.parent_vector_id
+                    branch.parent,
+                    up_to_round=up_to_round,
+                    up_to_vector_id=effective_vid
                 ))
             elif branch.parent_iteration is not None:
                 effective_round = branch.parent_iteration
@@ -303,6 +309,14 @@ class Session:
             meta = self.vector_db.get_message(from_vector_id)
             if meta is None:
                 raise ValueError(f"Vector ID {from_vector_id} not found")
+            # Validate that this vector_id is visible to current branch
+            visible_ids = self.get_visible_ids()
+            if from_vector_id not in visible_ids:
+                msg_branch = meta.get('branch', 'unknown')
+                raise ValueError(
+                    f"Vector ID {from_vector_id} (branch '{msg_branch}') "
+                    f"is not visible from current branch '{self.current_branch}'"
+                )
             parent_iteration = meta.get('round', 0)
             parent_vector_id = from_vector_id
         else:

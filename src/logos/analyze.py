@@ -252,13 +252,9 @@ def compute_cluster_timeline(
     vector_db = session.vector_db
     branch_name = session.current_branch
 
-    # Compute max iteration for this branch based on visible messages
-    visible_ids = session.get_visible_ids()
-    max_iteration = 0
-    for vid in visible_ids:
-        meta = vector_db.get_message(vid)
-        if meta:
-            max_iteration = max(max_iteration, meta.get('round', 0))
+    # Use the branch's iteration directly - this is the authoritative count
+    # for this branch's timeline, regardless of parent message round numbers
+    max_iteration = session.iteration
 
     if verbose:
         print(f"Computing cluster timeline for branch '{branch_name}' iterations 0-{max_iteration}...")
