@@ -1,8 +1,8 @@
 """
 Session management for Logosphere.
 
-Branch-based model: single append-only VectorDB with branch views.
-No snapshots - branches are just filters over the global ID space.
+Branch-based model: single append-only VectorDB with branch field per message.
+Visibility computed by filtering on branch name + parent lineage.
 """
 
 from __future__ import annotations
@@ -30,38 +30,12 @@ class Branch:
     name: str
     parent: Optional[str]  # Parent branch name
     parent_iteration: Optional[int]  # Iteration we branched at
-    id_ranges: list[list]  # [[start, end], ...] - end=None means open
-
-    def contains(self, vector_id: int) -> bool:
-        """Check if this branch contains the given vector_id."""
-        for start, end in self.id_ranges:
-            if end is None:
-                if vector_id >= start:
-                    return True
-            elif start <= vector_id <= end:
-                return True
-        return False
-
-    def add_id(self, vector_id: int) -> None:
-        """Add a vector_id to this branch (extends last open range or creates new)."""
-        if self.id_ranges and self.id_ranges[-1][1] is None:
-            # Last range is open, ID should be consecutive
-            pass  # Nothing to do, open range includes it
-        else:
-            # Start new open range
-            self.id_ranges.append([vector_id, None])
-
-    def close_range(self, last_id: int) -> None:
-        """Close the current open range at last_id."""
-        if self.id_ranges and self.id_ranges[-1][1] is None:
-            self.id_ranges[-1][1] = last_id
 
     def to_dict(self) -> dict:
         return {
             "name": self.name,
             "parent": self.parent,
             "parent_iteration": self.parent_iteration,
-            "id_ranges": self.id_ranges,
         }
 
     @classmethod
@@ -116,13 +90,12 @@ class Session:
             embedding_dim=self.embedding_dim
         )
 
-        # Create main branch with open range starting at 0
+        # Create main branch
         self.branches = {
             "main": Branch(
                 name="main",
                 parent=None,
                 parent_iteration=None,
-                id_ranges=[[0, None]]
             )
         }
         self.current_branch = "main"
@@ -184,43 +157,28 @@ class Session:
 
     def get_visible_ids(self) -> set[int]:
         """Get all vector_ids visible to current branch."""
-        visible = set()
-        branch = self.current
+        return self._get_branch_visible_ids(self.current_branch, None)
 
-        # Add own IDs
-        for start, end in branch.id_ranges:
-            if end is None:
-                end = self.vector_db.size() - 1
-            for i in range(start, end + 1):
-                visible.add(i)
+    def _get_branch_visible_ids(self, branch_name: str, up_to_round: Optional[int]) -> set[int]:
+        """Get IDs visible to a branch, optionally filtered by round."""
+        visible = set()
+        branch = self.branches.get(branch_name)
+        if not branch:
+            return visible
+
+        # Scan metadata for messages belonging to this branch
+        for vid in range(self.vector_db.size()):
+            meta = self.vector_db.get_message(vid)
+            if meta and meta.get('branch') == branch_name:
+                if up_to_round is None or meta.get('round', 0) <= up_to_round:
+                    visible.add(vid)
 
         # Add inherited IDs from parent (up to branch point)
         if branch.parent and branch.parent_iteration is not None:
-            parent_branch = self.branches.get(branch.parent)
-            if parent_branch:
-                visible.update(self._get_inherited_ids(parent_branch, branch.parent_iteration))
-
-        return visible
-
-    def _get_inherited_ids(self, branch: Branch, up_to_iteration: int) -> set[int]:
-        """Get IDs from branch up to given iteration."""
-        visible = set()
-
-        for start, end in branch.id_ranges:
-            if end is None:
-                end = self.vector_db.size() - 1
-            for vid in range(start, end + 1):
-                meta = self.vector_db.get_message(vid)
-                if meta and meta.get('round', 0) <= up_to_iteration:
-                    visible.add(vid)
-
-        # Recurse to parent
-        if branch.parent and branch.parent_iteration is not None:
-            parent_branch = self.branches.get(branch.parent)
-            if parent_branch:
-                # Use the earlier of the two branch points
-                effective_iter = min(up_to_iteration, branch.parent_iteration)
-                visible.update(self._get_inherited_ids(parent_branch, effective_iter))
+            effective_round = branch.parent_iteration
+            if up_to_round is not None:
+                effective_round = min(effective_round, up_to_round)
+            visible.update(self._get_branch_visible_ids(branch.parent, effective_round))
 
         return visible
 
@@ -266,8 +224,6 @@ class Session:
             branch=self.current_branch,
             extra_metadata=extra_metadata,
         )
-
-        # Branch automatically includes it (open range)
         return vector_id
 
     def branch(self, name: str) -> str:
@@ -283,17 +239,11 @@ class Session:
         if name in self.branches:
             raise ValueError(f"Branch '{name}' already exists")
 
-        # Close current branch's range
-        current_last_id = self.vector_db.size() - 1
-        if current_last_id >= 0:
-            self.current.close_range(current_last_id)
-
         # Create new branch
         new_branch = Branch(
             name=name,
             parent=self.current_branch,
             parent_iteration=self.iteration,
-            id_ranges=[[self.vector_db.size(), None]]  # New IDs start here
         )
         self.branches[name] = new_branch
 
@@ -325,22 +275,7 @@ class Session:
         if name not in self.branches:
             raise ValueError(f"Branch '{name}' not found")
 
-        # Close current branch's range if it has open range
-        current_last_id = self.vector_db.size() - 1
-        if current_last_id >= 0 and self.current.id_ranges:
-            last_range = self.current.id_ranges[-1]
-            if last_range[1] is None:
-                # Check if we actually added any IDs to this range
-                if current_last_id >= last_range[0]:
-                    self.current.close_range(current_last_id)
-
-        # Switch
         self.current_branch = name
-
-        # Reopen target branch's range for new additions
-        target = self.branches[name]
-        target.id_ranges.append([self.vector_db.size(), None])
-
         self._save()
 
     def inject_message(
@@ -404,20 +339,22 @@ class Session:
 
     def list_branches(self) -> list[dict]:
         """List all branches with details."""
+        # Count messages per branch
+        branch_counts = {name: 0 for name in self.branches}
+        for vid in range(self.vector_db.size()):
+            meta = self.vector_db.get_message(vid)
+            if meta:
+                branch_name = meta.get('branch')
+                if branch_name in branch_counts:
+                    branch_counts[branch_name] += 1
+
         result = []
         for name, branch in self.branches.items():
-            # Count messages in branch
-            own_ids = 0
-            for start, end in branch.id_ranges:
-                if end is None:
-                    end = self.vector_db.size() - 1
-                own_ids += max(0, end - start + 1)
-
             result.append({
                 "name": name,
                 "current": name == self.current_branch,
                 "parent": branch.parent,
                 "parent_iteration": branch.parent_iteration,
-                "own_messages": own_ids,
+                "own_messages": branch_counts[name],
             })
         return result
