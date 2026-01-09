@@ -24,6 +24,7 @@ from src.core.session import Session
 from src.core.embedding_client import EmbeddingClient
 from src.logos.config import LogosConfig
 from src.logos.runner import LogosRunner
+from src.logos.analyze import compute_cluster_timeline
 
 
 # Session directory tracking (for commands that need an open session)
@@ -322,6 +323,33 @@ def cmd_log(args):
     return 0
 
 
+def cmd_analyze(args):
+    """Analyze session dynamics."""
+    import json as json_mod
+    session_dir = get_current_session_dir()
+    session = Session(session_dir)
+
+    if args.tool == "clusters":
+        try:
+            timeline = compute_cluster_timeline(
+                session,
+                min_cluster_size=args.min_cluster_size,
+                centroid_match_threshold=args.centroid_threshold,
+                verbose=not args.quiet,
+            )
+        except ImportError as e:
+            print(f"Error: {e}")
+            print("Install analysis dependencies: pip install hdbscan")
+            return 1
+
+        if args.json:
+            print(json_mod.dumps(timeline.to_json(), indent=2))
+        else:
+            print(timeline.to_swimlane_ascii())
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Logos - Pool-based reasoning with branch-based history"
@@ -383,6 +411,19 @@ def main():
     p_log = subparsers.add_parser("log", help="Show intervention log")
     p_log.add_argument("--limit", type=int, default=20, help="Max entries")
 
+    # analyze
+    p_analyze = subparsers.add_parser("analyze", help="Analyze session dynamics")
+    p_analyze.add_argument("tool", nargs="?", default="clusters",
+                           choices=["clusters"],
+                           help="Analysis tool (default: clusters)")
+    p_analyze.add_argument("--json", action="store_true", help="Output as JSON")
+    p_analyze.add_argument("--min-cluster-size", type=int, default=3,
+                           help="Minimum cluster size for HDBSCAN (default: 3)")
+    p_analyze.add_argument("--centroid-threshold", type=float, default=0.3,
+                           help="Max cosine distance to match clusters across iterations (default: 0.3)")
+    p_analyze.add_argument("--quiet", "-q", action="store_true",
+                           help="Suppress progress output")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -402,6 +443,7 @@ def main():
         "list": cmd_list,
         "config": cmd_config,
         "log": cmd_log,
+        "analyze": cmd_analyze,
     }
 
     try:
