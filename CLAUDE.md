@@ -26,21 +26,24 @@ This boundary is what makes memetic dynamics observable - the system evolves bas
 logosphere/
 ├── src/
 │   ├── core/              # Experiment engine
-│   │   ├── vector_db.py   # Message storage with embeddings (replaces Pool)
+│   │   ├── vector_db.py   # Message storage with embeddings
+│   │   ├── session.py     # Branch management, visibility, interventions
+│   │   ├── intervention_log.py # Append-only JSONL audit trail
 │   │   ├── embedding_client.py # OpenRouter embedding API
 │   │   ├── interventions.py # Sampling strategy hooks
 │   │   ├── mind.py        # API invocation and parsing
 │   │   ├── orchestrator.py # Main loop, coordination
 │   │   ├── logger.py      # Structured logging
 │   │   └── init_parser.py # Seed message parsing
-│   ├── reasoning/         # Working memory reasoner
-│   │   └── reasoner.py    # Pool-based thought ecology
+│   ├── logos/             # Logos reasoning CLI
+│   │   ├── config.py      # Configuration + defaults
+│   │   └── runner.py      # Core loop: sample → mind → embed → add
 │   ├── analysis/          # Analysis tools
 │   │   └── attractors.py  # HDBSCAN clustering for attractor detection
 │   └── config.py          # Parameters and system prompt
 ├── scripts/
 │   ├── run.py             # Experiment entry point
-│   ├── run_reasoner.py    # Reasoning session entry point
+│   ├── logos.py           # Logos reasoning CLI
 │   └── analyze.py         # Post-hoc analysis
 ├── tests/                 # Validation tests
 └── experiments/           # Self-contained experiment runs
@@ -62,7 +65,7 @@ uv sync --extra dev          # Add dev tools (pytest)
 ```
 
 Run experiments: `python scripts/run.py <experiment_name>`
-Run reasoner: `python scripts/run_reasoner.py "problem statement"`
+Run logos: `python scripts/logos.py --help`
 Run analysis: `python scripts/analyze.py <experiment_name> --tool <tool>`
 Run tests: `pytest`
 
@@ -128,27 +131,35 @@ Coordinates rounds with real-time detection:
 
 **Abort on failure:** Embedding API errors trigger ExperimentAbortError for clean failure (partial results preserved).
 
-### Working Memory Reasoner (src/reasoning/reasoner.py)
+### Logos CLI (scripts/logos.py)
 
-Logosphere turned inward - pool-based thought ecology for reasoning:
+Pool-based reasoning with branch-based history management:
 
-- **Minimal protocols** - external prompts prefixed with `>>> ` (documented in system prompt)
-- **Pool state = output** - answer emerges from dominant cluster, not explicit declaration
-- **Resumable sessions** - checkpoint after each iteration, resume with `--resume`
+- **Branch-based sessions** - create branches from any state, switch between them
+- **Minimal protocols** - external prompts prefixed with `>>> `
+- **Pool state = output** - answer emerges from dominant cluster
 - **Per-iteration metrics** - diversity, cluster count, coherence tracked
+- **Intervention logging** - all actions recorded in append-only audit trail
 
 ```bash
-python scripts/run_reasoner.py "prompt" -o ./out -n 10
-python scripts/run_reasoner.py "first" "second" -o ./out     # multiple prompts
-python scripts/run_reasoner.py --resume ./out -n 10          # adds 10 more iterations
-python scripts/run_reasoner.py --resume ./out "new prompt"   # inject and continue
+python scripts/logos.py init ./session "initial prompt"   # Create session
+python scripts/logos.py open ./session                    # Open existing
+python scripts/logos.py run 10                            # Batch iterations
+python scripts/logos.py step                              # Single iteration
+python scripts/logos.py inject "thought text"             # Add external message
+python scripts/logos.py branch experiment                 # Create branch
+python scripts/logos.py switch main                       # Switch branch
+python scripts/logos.py status                            # Current state
+python scripts/logos.py list                              # Show all branches
+python scripts/logos.py config                            # Show/set branch config
+python scripts/logos.py log                               # Intervention history
 ```
 
-**CLI notes:**
-- Multiple prompts can be provided (seeded as separate `>>> ` prefixed thoughts)
-- `-n` is additive on resume (adds iterations to current position)
-- Prompts can be injected on resume (appended to pool before continuing)
-- Early termination is off by default; use `--early-termination` to enable
+**Session model:**
+- Append-only VectorDB with branch field per message
+- Visibility computed by filtering (no data duplication)
+- `branches.json` stores `{name, parent, parent_iteration}` per branch
+- Deep session copy via filesystem (`cp -rp`) for parallel experiments
 
 **Philosophy:** Memes win by replication, not by declaring themselves important. The `>>> ` prefix is minimal metadata to distinguish external input from internal generation.
 
@@ -328,8 +339,9 @@ This makes the pool the "culture" - the collective memory that evolves.
 **Recently implemented:**
 - VectorDB for similarity search (replaces Pool)
 - Attractor detection via HDBSCAN clustering
-- Working Memory Reasoner (pool-based thought ecology)
-- Resumable reasoning sessions (checkpoint/restore)
+- Logos CLI with branch-based session management
+- Intervention logging (append-only audit trail)
+- Per-branch config tracking
 - Real-time dynamics tracking (diversity, coherence, clusters)
 
 **Potential experiments:**
