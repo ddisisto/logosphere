@@ -272,6 +272,9 @@ class LogosRunner:
             metrics = self.step()
             metrics_history.append(metrics)
 
+            # Persist after each iteration (crash safety + live monitoring)
+            self.session._save()
+
             # Check termination (if any conditions are configured)
             term = self._check_termination(metrics)
             if term:
