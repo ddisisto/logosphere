@@ -13,6 +13,7 @@ from typing import Optional, Callable
 import numpy as np
 
 from src.core.session import Session
+from src.core.intervention_log import Intervention
 
 
 def _to_native(obj):
@@ -188,10 +189,9 @@ class LogosRunner:
             text = f"{EXTERNAL_PROMPT_PREFIX}{prompt}"
             embedding = self.embedding_client.embed_single(text)
             if embedding is not None:
-                self.session.vector_db.add(
+                self.session.add(
                     text=text,
                     embedding=embedding,
-                    round_num=-1,  # Seed
                     mind_id=-1,
                     extra_metadata={"seed": True},
                 )
@@ -203,13 +203,8 @@ class LogosRunner:
         Returns:
             Metrics for this iteration
         """
-        vector_db = self.session.vector_db
-
-        # Sample from active pool
-        thoughts, sampled_ids = vector_db.sample_with_ids(
-            self.config.k_samples,
-            from_active_pool=True
-        )
+        # Sample from current branch's visible pool
+        thoughts, sampled_ids = self.session.sample(self.config.k_samples)
 
         if self.config.verbose:
             print(f"\n[Iteration {self.session.iteration}] Sampled {len(thoughts)} thoughts")
@@ -235,10 +230,9 @@ class LogosRunner:
 
             embedding = self.embedding_client.embed_single(thought)
             if embedding is not None:
-                vector_db.add(
+                self.session.add(
                     text=thought,
                     embedding=embedding,
-                    round_num=self.session.iteration,
                     mind_id=0,
                     extra_metadata={"sampled_ids": sampled_ids},
                 )
@@ -271,11 +265,6 @@ class LogosRunner:
         Returns:
             List of metrics for each iteration
         """
-        # Prepare snapshot before run
-        pre_run_snapshot_id = self.session.prepare_run(
-            metrics_fn=lambda vdb: compute_metrics(vdb, self.config.min_cluster_size)
-        )
-
         metrics_history = []
         termination_reason = "completed"
 
@@ -294,8 +283,6 @@ class LogosRunner:
         # Record run intervention
         self.session.record_run(
             iterations_run=len(metrics_history),
-            snapshot_before_id=pre_run_snapshot_id,
-            metrics_fn=lambda vdb: compute_metrics(vdb, self.config.min_cluster_size),
             notes=f"termination: {termination_reason}",
         )
 

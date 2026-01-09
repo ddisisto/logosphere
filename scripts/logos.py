@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Logos CLI - Pool-based reasoning with session infrastructure.
+Logos CLI - Pool-based reasoning with branch-based history.
 
 Usage:
     python scripts/logos.py init ./session "initial prompt"
     python scripts/logos.py run 10
     python scripts/logos.py step
     python scripts/logos.py inject "thought text"
+    python scripts/logos.py fork experiment
+    python scripts/logos.py switch main
     python scripts/logos.py status
 """
 
@@ -20,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.core.session import Session
 from src.core.embedding_client import EmbeddingClient
 from src.logos.config import LogosConfig
-from src.logos.runner import LogosRunner, compute_metrics
+from src.logos.runner import LogosRunner
 
 
 # Session directory tracking (for commands that need an open session)
@@ -43,7 +45,7 @@ def cmd_init(args):
     """Initialize a new session."""
     session_dir = Path(args.session_dir)
 
-    if session_dir.exists() and (session_dir / "state.json").exists():
+    if session_dir.exists() and (session_dir / "branches.json").exists():
         print(f"Session already exists at {session_dir}")
         print("Use 'logos open' to open it, or choose a different directory.")
         return 1
@@ -71,17 +73,14 @@ def cmd_init(args):
     if args.prompts:
         runner = LogosRunner(session, config)
         runner.seed_prompts(args.prompts)
-
-        # Save initial state
-        session.save(
-            description="init",
-            metrics_fn=lambda vdb: compute_metrics(vdb, config.min_cluster_size)
-        )
+        session._save()
 
     set_current_session_dir(session_dir)
 
     print(f"Session initialized: {session_dir}")
-    print(f"Pool size: {session.vector_db.size()}")
+    print(f"Branch: {session.current_branch}")
+    visible = len(session.get_visible_ids())
+    print(f"Pool: {visible} messages")
     if args.prompts:
         print(f"Seeded with {len(args.prompts)} prompt(s)")
 
@@ -96,7 +95,7 @@ def cmd_open(args):
         print(f"Session not found: {session_dir}")
         return 1
 
-    if not (session_dir / "state.json").exists():
+    if not (session_dir / "branches.json").exists():
         print(f"Not a valid session directory: {session_dir}")
         return 1
 
@@ -106,8 +105,9 @@ def cmd_open(args):
     # Show status
     session = Session(session_dir)
     status = session.get_status()
+    print(f"Branch: {status['current_branch']}")
     print(f"Iteration: {status['iteration']}")
-    print(f"Pool size: {status['pool_size']} (active: {status['active_pool_size']})")
+    print(f"Pool: {status['visible_messages']} visible ({status['total_messages']} total)")
 
     return 0
 
@@ -133,8 +133,7 @@ def cmd_run(args):
     if args.prompt:
         runner.seed_prompts([args.prompt])
 
-    print(f"Running {args.iterations} iterations...")
-    print(f"Session: {session_dir}")
+    print(f"Running {args.iterations} iterations on branch '{session.current_branch}'...")
     print("-" * 40)
 
     metrics_history = runner.run(args.iterations)
@@ -156,14 +155,11 @@ def cmd_step(args):
     config = LogosConfig.from_dict(session.config) if session.config else LogosConfig()
     runner = LogosRunner(session, config)
 
-    print(f"Running single step...")
+    print(f"Running step on branch '{session.current_branch}'...")
     metrics = runner.step()
 
     # Save after step
-    session.save(
-        description=f"step-{session.iteration}",
-        metrics_fn=lambda vdb: compute_metrics(vdb, config.min_cluster_size)
-    )
+    session._save()
 
     print(f"Iteration {metrics.iteration}: {metrics.thoughts_added} thoughts added")
     print(f"Clusters: {metrics.num_clusters}, Coherence: {metrics.coherence:.2f}")
@@ -183,61 +179,39 @@ def cmd_inject(args):
         text=args.text,
         embedding_client=embedding_client,
         notes=args.notes or "",
-        metrics_fn=lambda vdb: compute_metrics(vdb, config.min_cluster_size)
     )
 
     print(f"Injected: {args.text[:60]}...")
-    print(f"Intervention: {intervention.id}")
-
-    return 0
-
-
-def cmd_save(args):
-    """Save manual snapshot."""
-    session_dir = get_current_session_dir()
-    session = Session(session_dir)
-
-    config = LogosConfig.from_dict(session.config) if session.config else LogosConfig()
-
-    snapshot = session.save(
-        description=args.description,
-        metrics_fn=lambda vdb: compute_metrics(vdb, config.min_cluster_size)
-    )
-
-    print(f"Saved snapshot: {snapshot.id}")
-    print(f"Description: {args.description}")
-
-    return 0
-
-
-def cmd_load(args):
-    """Load/rollback to snapshot."""
-    session_dir = get_current_session_dir()
-    session = Session(session_dir)
-
-    session.load(args.snapshot_id)
-
-    print(f"Loaded snapshot: {args.snapshot_id}")
-    print(f"Iteration: {session.iteration}")
-    print(f"Pool size: {session.vector_db.size()}")
+    print(f"Branch: {session.current_branch}")
 
     return 0
 
 
 def cmd_fork(args):
-    """Create fork point."""
+    """Create a new branch from current state."""
     session_dir = get_current_session_dir()
     session = Session(session_dir)
 
-    config = LogosConfig.from_dict(session.config) if session.config else LogosConfig()
+    old_branch = session.current_branch
+    new_branch = session.fork(args.name)
 
-    fork_id = session.fork(
-        description=args.description,
-        metrics_fn=lambda vdb: compute_metrics(vdb, config.min_cluster_size)
-    )
+    print(f"Forked '{old_branch}' -> '{new_branch}' at iteration {session.iteration}")
+    print(f"Now on branch: {new_branch}")
 
-    print(f"Fork created: {fork_id}")
-    print(f"Use 'logos load {fork_id}' to return to this point")
+    return 0
+
+
+def cmd_switch(args):
+    """Switch to a different branch."""
+    session_dir = get_current_session_dir()
+    session = Session(session_dir)
+
+    old_branch = session.current_branch
+    session.switch(args.name)
+
+    print(f"Switched: {old_branch} -> {args.name}")
+    visible = len(session.get_visible_ids())
+    print(f"Visible pool: {visible} messages")
 
     return 0
 
@@ -250,11 +224,34 @@ def cmd_status(args):
     status = session.get_status()
 
     print(f"Session: {status['session_dir']}")
+    print(f"Branch: {status['current_branch']}")
     print(f"Iteration: {status['iteration']}")
-    print(f"Current snapshot: {status['current_snapshot_id'] or '(none)'}")
-    print(f"Pool: {status['pool_size']} total, {status['active_pool_size']} active")
-    print(f"Snapshots: {status['total_snapshots']}")
-    print(f"Interventions: {status['total_interventions']}")
+    print(f"Pool: {status['visible_messages']} visible, {status['active_pool_size']} active")
+    print(f"Total messages: {status['total_messages']}")
+    print(f"Branches: {', '.join(status['branches'])}")
+    print(f"Interventions: {status['interventions']}")
+
+    return 0
+
+
+def cmd_branches(args):
+    """List all branches."""
+    session_dir = get_current_session_dir()
+    session = Session(session_dir)
+
+    branches = session.list_branches()
+
+    if not branches:
+        print("No branches.")
+        return 0
+
+    for b in branches:
+        marker = " *" if b['current'] else ""
+        print(f"  {b['name']}{marker}")
+        if b['fork_from']:
+            print(f"    forked from: {b['fork_from']} @ iteration {b['fork_iteration']}")
+        print(f"    own messages: {b['own_messages']}")
+        print()
 
     return 0
 
@@ -275,68 +272,15 @@ def cmd_log(args):
         print(f"[{ts}] {i.intervention_type}: {i.id}")
         if i.notes:
             print(f"    notes: {i.notes}")
-        print(f"    {i.snapshot_before or '(start)'} -> {i.snapshot_after}")
+        print(f"    {i.snapshot_before} -> {i.snapshot_after}")
         print()
-
-    return 0
-
-
-def cmd_list(args):
-    """List snapshots."""
-    session_dir = get_current_session_dir()
-    session = Session(session_dir)
-
-    snapshots = session.snapshot_store.list()
-
-    if not snapshots:
-        print("No snapshots.")
-        return 0
-
-    current = session.current_snapshot_id
-
-    for s in snapshots[:args.limit]:
-        marker = " *" if s.id == current else ""
-        ts = s.created_at[:19].replace('T', ' ')
-        print(f"[{ts}] {s.id}{marker}")
-        print(f"    {s.description} (iter {s.iteration})")
-        if s.parent_id:
-            print(f"    parent: {s.parent_id}")
-        print()
-
-    if len(snapshots) > args.limit:
-        print(f"... and {len(snapshots) - args.limit} more")
-
-    return 0
-
-
-def cmd_lineage(args):
-    """Show snapshot lineage."""
-    session_dir = get_current_session_dir()
-    session = Session(session_dir)
-
-    snapshot_id = args.snapshot_id or session.current_snapshot_id
-    if not snapshot_id:
-        print("No snapshot specified and no current snapshot.")
-        return 1
-
-    lineage = session.snapshot_store.get_lineage(snapshot_id)
-
-    if not lineage:
-        print("No lineage found.")
-        return 0
-
-    print(f"Lineage to {snapshot_id}:")
-    for i, s in enumerate(lineage):
-        prefix = "└─" if i == len(lineage) - 1 else "├─"
-        print(f"  {prefix} {s.id}")
-        print(f"     {s.description}")
 
     return 0
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Logos - Pool-based reasoning with session infrastructure"
+        description="Logos - Pool-based reasoning with branch-based history"
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -369,32 +313,23 @@ def main():
     p_inject.add_argument("text", help="Thought text")
     p_inject.add_argument("--notes", help="Observer notes")
 
-    # save
-    p_save = subparsers.add_parser("save", help="Save manual snapshot")
-    p_save.add_argument("description", help="Snapshot description")
-
-    # load
-    p_load = subparsers.add_parser("load", help="Load/rollback to snapshot")
-    p_load.add_argument("snapshot_id", help="Snapshot ID")
-
     # fork
-    p_fork = subparsers.add_parser("fork", help="Create fork point")
-    p_fork.add_argument("description", help="Fork description")
+    p_fork = subparsers.add_parser("fork", help="Create new branch from current state")
+    p_fork.add_argument("name", help="New branch name")
+
+    # switch
+    p_switch = subparsers.add_parser("switch", help="Switch to existing branch")
+    p_switch.add_argument("name", help="Branch name")
 
     # status
     p_status = subparsers.add_parser("status", help="Show session status")
 
+    # branches
+    p_branches = subparsers.add_parser("branches", help="List all branches")
+
     # log
     p_log = subparsers.add_parser("log", help="Show intervention log")
     p_log.add_argument("--limit", type=int, default=20, help="Max entries")
-
-    # list
-    p_list = subparsers.add_parser("list", help="List snapshots")
-    p_list.add_argument("--limit", type=int, default=20, help="Max entries")
-
-    # lineage
-    p_lineage = subparsers.add_parser("lineage", help="Show snapshot lineage")
-    p_lineage.add_argument("snapshot_id", nargs="?", help="Snapshot ID (default: current)")
 
     args = parser.parse_args()
 
@@ -409,19 +344,19 @@ def main():
         "run": cmd_run,
         "step": cmd_step,
         "inject": cmd_inject,
-        "save": cmd_save,
-        "load": cmd_load,
         "fork": cmd_fork,
+        "switch": cmd_switch,
         "status": cmd_status,
+        "branches": cmd_branches,
         "log": cmd_log,
-        "list": cmd_list,
-        "lineage": cmd_lineage,
     }
 
     try:
         return commands[args.command](args)
     except Exception as e:
         print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 
