@@ -263,6 +263,7 @@ class Session:
             embedding=embedding,
             round_num=self.iteration,
             mind_id=mind_id,
+            branch=self.current_branch,
             extra_metadata=extra_metadata,
         )
 

@@ -52,6 +52,7 @@ class VectorDB:
         embedding: np.ndarray,
         round_num: int,
         mind_id: int,
+        branch: str = "main",
         extra_metadata: Optional[dict] = None
     ) -> int:
         """
@@ -62,6 +63,7 @@ class VectorDB:
             embedding: Vector embedding (1536-dim)
             round_num: Experiment round number
             mind_id: Which Mind produced this message
+            branch: Branch this message belongs to
             extra_metadata: Optional additional metadata
 
         Returns:
@@ -69,15 +71,18 @@ class VectorDB:
         """
         vector_id = len(self.embeddings)
 
+        # Build metadata with consistent field order for readability
+        # (text last since it's longest and variable-length)
         meta = {
-            'vector_id': vector_id,
-            'text': text,
+            'branch': branch,
             'round': round_num,
             'mind_id': mind_id,
+            'vector_id': vector_id,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
         if extra_metadata:
             meta.update(extra_metadata)
+        meta['text'] = text  # Always last for readability
 
         self.embeddings.append(embedding.astype(np.float32))
         self.metadata.append(meta)
