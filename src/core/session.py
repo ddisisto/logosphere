@@ -33,6 +33,7 @@ class Branch:
     name: str
     parent: Optional[str]  # Parent branch name
     parent_iteration: Optional[int]  # Iteration we branched at
+    iteration: int = 0  # Current iteration for this branch
     parent_vector_id: Optional[int] = None  # If set, filter by vector_id instead of round
     config: dict = None  # Branch-specific config (inherited from parent on creation)
 
@@ -45,6 +46,7 @@ class Branch:
             "name": self.name,
             "parent": self.parent,
             "parent_iteration": self.parent_iteration,
+            "iteration": self.iteration,
             "config": self.config,
         }
         if self.parent_vector_id is not None:
@@ -53,6 +55,10 @@ class Branch:
 
     @classmethod
     def from_dict(cls, data: dict) -> Branch:
+        # Handle legacy data without iteration field
+        if 'iteration' not in data:
+            data = data.copy()
+            data['iteration'] = 0
         return cls(**data)
 
 
@@ -82,7 +88,6 @@ class Session:
         self.vector_db: Optional[VectorDB] = None
         self.branches: dict[str, Branch] = {}
         self.current_branch: str = "main"
-        self.iteration: int = 0
 
         # Intervention log (optional, for audit)
         self.intervention_log = InterventionLog(self.session_dir / "interventions.jsonl")
@@ -102,17 +107,17 @@ class Session:
             embedding_dim=self.embedding_dim
         )
 
-        # Create main branch
+        # Create main branch (iteration=0 is default in Branch)
         self.branches = {
             "main": Branch(
                 name="main",
                 parent=None,
                 parent_iteration=None,
+                iteration=0,
                 config={},
             )
         }
         self.current_branch = "main"
-        self.iteration = 0
 
         self._save()
 
@@ -123,11 +128,14 @@ class Session:
             data = json.load(f)
 
         self.current_branch = data["current"]
-        self.iteration = data["iteration"]
         self.branches = {
             name: Branch.from_dict(b)
             for name, b in data["branches"].items()
         }
+
+        # Migrate legacy session-level iteration to current branch if needed
+        if "iteration" in data and self.current.iteration == 0:
+            self.current.iteration = data["iteration"]
 
         # Migrate session-level config to main branch if needed
         session_config = data.get("config", {})
@@ -150,10 +158,9 @@ class Session:
         """Save session to disk."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save branches (config now stored per-branch)
+        # Save branches (iteration now stored per-branch)
         data = {
             "current": self.current_branch,
-            "iteration": self.iteration,
             "branches": {
                 name: b.to_dict()
                 for name, b in self.branches.items()
@@ -179,6 +186,16 @@ class Session:
     def config(self, value: dict) -> None:
         """Set current branch's config."""
         self.current.config = value
+
+    @property
+    def iteration(self) -> int:
+        """Current branch's iteration."""
+        return self.current.iteration
+
+    @iteration.setter
+    def iteration(self, value: int) -> None:
+        """Set current branch's iteration."""
+        self.current.iteration = value
 
     def get_visible_ids(self) -> set[int]:
         """Get all vector_ids visible to current branch."""
@@ -293,11 +310,12 @@ class Session:
             parent_iteration = self.iteration
             parent_vector_id = None
 
-        # Create new branch (inherit parent's config)
+        # Create new branch (inherit parent's config and iteration)
         new_branch = Branch(
             name=name,
             parent=self.current_branch,
             parent_iteration=parent_iteration,
+            iteration=parent_iteration,  # Start from parent's iteration at branch point
             parent_vector_id=parent_vector_id,
             config=self.config.copy(),  # Copy parent's config
         )
