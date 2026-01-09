@@ -7,9 +7,10 @@ Usage:
     python scripts/logos.py run 10
     python scripts/logos.py step
     python scripts/logos.py inject "thought text"
-    python scripts/logos.py fork experiment
+    python scripts/logos.py branch experiment
     python scripts/logos.py switch main
     python scripts/logos.py status
+    python scripts/logos.py list
 """
 
 import argparse
@@ -187,15 +188,15 @@ def cmd_inject(args):
     return 0
 
 
-def cmd_fork(args):
+def cmd_branch(args):
     """Create a new branch from current state."""
     session_dir = get_current_session_dir()
     session = Session(session_dir)
 
     old_branch = session.current_branch
-    new_branch = session.fork(args.name)
+    new_branch = session.branch(args.name)
 
-    print(f"Forked '{old_branch}' -> '{new_branch}' at iteration {session.iteration}")
+    print(f"Branched '{old_branch}' -> '{new_branch}' at iteration {session.iteration}")
     print(f"Now on branch: {new_branch}")
 
     return 0
@@ -234,7 +235,7 @@ def cmd_status(args):
     return 0
 
 
-def cmd_branches(args):
+def cmd_list(args):
     """List all branches."""
     session_dir = get_current_session_dir()
     session = Session(session_dir)
@@ -248,8 +249,8 @@ def cmd_branches(args):
     for b in branches:
         marker = " *" if b['current'] else ""
         print(f"  {b['name']}{marker}")
-        if b['fork_from']:
-            print(f"    forked from: {b['fork_from']} @ iteration {b['fork_iteration']}")
+        if b['parent']:
+            print(f"    parent: {b['parent']} @ iteration {b['parent_iteration']}")
         print(f"    own messages: {b['own_messages']}")
         print()
 
@@ -313,9 +314,9 @@ def main():
     p_inject.add_argument("text", help="Thought text")
     p_inject.add_argument("--notes", help="Observer notes")
 
-    # fork
-    p_fork = subparsers.add_parser("fork", help="Create new branch from current state")
-    p_fork.add_argument("name", help="New branch name")
+    # branch
+    p_branch = subparsers.add_parser("branch", help="Create new branch from current state")
+    p_branch.add_argument("name", help="New branch name")
 
     # switch
     p_switch = subparsers.add_parser("switch", help="Switch to existing branch")
@@ -324,8 +325,8 @@ def main():
     # status
     p_status = subparsers.add_parser("status", help="Show session status")
 
-    # branches
-    p_branches = subparsers.add_parser("branches", help="List all branches")
+    # list
+    p_list = subparsers.add_parser("list", help="List all branches")
 
     # log
     p_log = subparsers.add_parser("log", help="Show intervention log")
@@ -344,10 +345,10 @@ def main():
         "run": cmd_run,
         "step": cmd_step,
         "inject": cmd_inject,
-        "fork": cmd_fork,
+        "branch": cmd_branch,
         "switch": cmd_switch,
         "status": cmd_status,
-        "branches": cmd_branches,
+        "list": cmd_list,
         "log": cmd_log,
     }
 

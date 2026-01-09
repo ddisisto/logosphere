@@ -18,7 +18,7 @@ from .intervention_log import (
     InterventionLog,
     Intervention,
     INTERVENTION_INJECT,
-    INTERVENTION_FORK,
+    INTERVENTION_BRANCH,
     INTERVENTION_RUN,
 )
 
@@ -28,8 +28,8 @@ class Branch:
     """A branch is a view over the VectorDB."""
 
     name: str
-    fork_from: Optional[str]  # Parent branch name
-    fork_iteration: Optional[int]  # Iteration we forked at
+    parent: Optional[str]  # Parent branch name
+    parent_iteration: Optional[int]  # Iteration we branched at
     id_ranges: list[list]  # [[start, end], ...] - end=None means open
 
     def contains(self, vector_id: int) -> bool:
@@ -59,8 +59,8 @@ class Branch:
     def to_dict(self) -> dict:
         return {
             "name": self.name,
-            "fork_from": self.fork_from,
-            "fork_iteration": self.fork_iteration,
+            "parent": self.parent,
+            "parent_iteration": self.parent_iteration,
             "id_ranges": self.id_ranges,
         }
 
@@ -120,8 +120,8 @@ class Session:
         self.branches = {
             "main": Branch(
                 name="main",
-                fork_from=None,
-                fork_iteration=None,
+                parent=None,
+                parent_iteration=None,
                 id_ranges=[[0, None]]
             )
         }
@@ -178,14 +178,14 @@ class Session:
         self.vector_db.save(self._vector_db_path)
 
     @property
-    def branch(self) -> Branch:
-        """Current branch."""
+    def current(self) -> Branch:
+        """Current branch object."""
         return self.branches[self.current_branch]
 
     def get_visible_ids(self) -> set[int]:
         """Get all vector_ids visible to current branch."""
         visible = set()
-        branch = self.branch
+        branch = self.current
 
         # Add own IDs
         for start, end in branch.id_ranges:
@@ -194,11 +194,11 @@ class Session:
             for i in range(start, end + 1):
                 visible.add(i)
 
-        # Add inherited IDs from parent (up to fork point)
-        if branch.fork_from and branch.fork_iteration is not None:
-            parent = self.branches.get(branch.fork_from)
-            if parent:
-                visible.update(self._get_inherited_ids(parent, branch.fork_iteration))
+        # Add inherited IDs from parent (up to branch point)
+        if branch.parent and branch.parent_iteration is not None:
+            parent_branch = self.branches.get(branch.parent)
+            if parent_branch:
+                visible.update(self._get_inherited_ids(parent_branch, branch.parent_iteration))
 
         return visible
 
@@ -215,12 +215,12 @@ class Session:
                     visible.add(vid)
 
         # Recurse to parent
-        if branch.fork_from and branch.fork_iteration is not None:
-            parent = self.branches.get(branch.fork_from)
-            if parent:
-                # Use the earlier of the two fork points
-                effective_iter = min(up_to_iteration, branch.fork_iteration)
-                visible.update(self._get_inherited_ids(parent, effective_iter))
+        if branch.parent and branch.parent_iteration is not None:
+            parent_branch = self.branches.get(branch.parent)
+            if parent_branch:
+                # Use the earlier of the two branch points
+                effective_iter = min(up_to_iteration, branch.parent_iteration)
+                visible.update(self._get_inherited_ids(parent_branch, effective_iter))
 
         return visible
 
@@ -269,7 +269,7 @@ class Session:
         # Branch automatically includes it (open range)
         return vector_id
 
-    def fork(self, name: str) -> str:
+    def branch(self, name: str) -> str:
         """
         Create new branch from current state.
 
@@ -285,20 +285,20 @@ class Session:
         # Close current branch's range
         current_last_id = self.vector_db.size() - 1
         if current_last_id >= 0:
-            self.branch.close_range(current_last_id)
+            self.current.close_range(current_last_id)
 
         # Create new branch
         new_branch = Branch(
             name=name,
-            fork_from=self.current_branch,
-            fork_iteration=self.iteration,
+            parent=self.current_branch,
+            parent_iteration=self.iteration,
             id_ranges=[[self.vector_db.size(), None]]  # New IDs start here
         )
         self.branches[name] = new_branch
 
         # Log intervention
         self.intervention_log.record(
-            intervention_type=INTERVENTION_FORK,
+            intervention_type=INTERVENTION_BRANCH,
             content={
                 "from_branch": self.current_branch,
                 "to_branch": name,
@@ -326,12 +326,12 @@ class Session:
 
         # Close current branch's range if it has open range
         current_last_id = self.vector_db.size() - 1
-        if current_last_id >= 0 and self.branch.id_ranges:
-            last_range = self.branch.id_ranges[-1]
+        if current_last_id >= 0 and self.current.id_ranges:
+            last_range = self.current.id_ranges[-1]
             if last_range[1] is None:
                 # Check if we actually added any IDs to this range
                 if current_last_id >= last_range[0]:
-                    self.branch.close_range(current_last_id)
+                    self.current.close_range(current_last_id)
 
         # Switch
         self.current_branch = name
@@ -415,8 +415,8 @@ class Session:
             result.append({
                 "name": name,
                 "current": name == self.current_branch,
-                "fork_from": branch.fork_from,
-                "fork_iteration": branch.fork_iteration,
+                "parent": branch.parent,
+                "parent_iteration": branch.parent_iteration,
                 "own_messages": own_ids,
             })
         return result
