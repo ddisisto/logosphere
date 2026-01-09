@@ -5,7 +5,8 @@ Configuration for Logos reasoning sessions.
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
-# Re-export for type hints
+from src.core.session import EXTERNAL_PROMPT_PREFIX
+
 __all__ = ["LogosConfig", "DEFAULT_SYSTEM_PROMPT", "EXTERNAL_PROMPT_PREFIX"]
 
 
@@ -32,9 +33,6 @@ This is another
 ---
 ```
 """
-
-# Prefix for externally-sourced prompts
-EXTERNAL_PROMPT_PREFIX = ">>> "
 
 
 @dataclass

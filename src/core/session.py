@@ -22,6 +22,9 @@ from .intervention_log import (
     INTERVENTION_RUN,
 )
 
+# External messages (injected/seeded) get this prefix
+EXTERNAL_PROMPT_PREFIX = ">>> "
+
 
 @dataclass
 class Branch:
@@ -284,13 +287,16 @@ class Session:
         embedding_client: EmbeddingClient,
         notes: str = "",
     ) -> Intervention:
-        """Add message with intervention logging."""
-        embedding = embedding_client.embed_single(text)
+        """Add external message with intervention logging."""
+        # Add external prompt prefix for consistency with seeded prompts
+        prefixed_text = f"{EXTERNAL_PROMPT_PREFIX}{text}"
+
+        embedding = embedding_client.embed_single(prefixed_text)
         if embedding is None:
             raise ValueError("Embedding generation failed")
 
         vector_id = self.add(
-            text=text,
+            text=prefixed_text,
             embedding=embedding,
             mind_id=-1,
             extra_metadata={"injected": True},
