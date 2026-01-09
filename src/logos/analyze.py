@@ -286,14 +286,22 @@ def compute_cluster_timeline(
     if verbose:
         print(f"Computing cluster timeline for branch '{branch_name}' iterations {min_iter}-{max_iter}...")
 
-    # Build lookup for embeddings by vector_id
+    # Pre-index: build lookup for embeddings and group visible messages by round
+    # This changes O(iterations × messages) to O(messages + iterations)
+    all_visible_ids = session.get_visible_ids()
     embeddings_by_vid = {}
     metadata_by_vid = {}
-    for vid in range(vector_db.size()):
+    vids_by_round: dict[int, list[int]] = {}
+
+    for vid in all_visible_ids:
         meta = vector_db.get_message(vid)
         if meta:
             metadata_by_vid[vid] = meta
             embeddings_by_vid[vid] = vector_db.embeddings[vid]
+            round_num = meta.get('round', 0)
+            if round_num not in vids_by_round:
+                vids_by_round[round_num] = []
+            vids_by_round[round_num].append(vid)
 
     if not embeddings_by_vid:
         return ClusterTimeline(iterations=[], clusters=[], total_messages=0)
@@ -306,14 +314,20 @@ def compute_cluster_timeline(
     # Previous iteration's cluster centroids for matching
     prev_centroids: dict[str, np.ndarray] = {}
 
+    # Incrementally accumulate visible IDs instead of recomputing each iteration
+    cumulative_visible: set[int] = set()
+    # Pre-populate with all messages up to min_iter-1 (the starting state)
+    for r in range(min_iter):
+        cumulative_visible.update(vids_by_round.get(r, []))
+
     for idx, iteration in enumerate(iterations):
-        # Get visible IDs for current branch at this iteration
-        visible_ids = session._get_branch_visible_ids(branch_name, up_to_round=iteration)
+        # Add messages from this iteration
+        cumulative_visible.update(vids_by_round.get(iteration, []))
 
         # Get embeddings and metadata for visible messages
         iter_embeddings = []
         iter_metadata = []
-        for vid in sorted(visible_ids):
+        for vid in sorted(cumulative_visible):
             if vid in embeddings_by_vid:
                 iter_embeddings.append(embeddings_by_vid[vid])
                 iter_metadata.append(metadata_by_vid[vid])
@@ -435,9 +449,8 @@ def compute_cluster_timeline(
     # Sort clusters by first_seen
     clusters = sorted(tracked_clusters.values(), key=lambda c: c.first_seen)
 
-    # Compute total messages at final iteration (visible to current branch)
-    final_visible_ids = session._get_branch_visible_ids(branch_name, up_to_round=max_iter)
-    total_messages = len(final_visible_ids)
+    # Total messages at final iteration is what we accumulated
+    total_messages = len(cumulative_visible)
 
     if verbose:
         print(f"Done. Found {len(clusters)} clusters across {len(iterations)} iterations.")

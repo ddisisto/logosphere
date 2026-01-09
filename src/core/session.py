@@ -133,6 +133,10 @@ class Session:
             for name, b in data["branches"].items()
         }
 
+        # Update active_pool_size from current branch's config
+        if self.current.config.get('active_pool_size'):
+            self.active_pool_size = self.current.config['active_pool_size']
+
         # Load VectorDB
         if self._vector_db_path.exists():
             self.vector_db = VectorDB.load(
@@ -359,6 +363,11 @@ class Session:
             raise ValueError(f"Branch '{name}' not found")
 
         self.current_branch = name
+
+        # Update active_pool_size from new branch's config
+        if self.current.config.get('active_pool_size'):
+            self.active_pool_size = self.current.config['active_pool_size']
+
         self._save()
 
     def inject_message(
