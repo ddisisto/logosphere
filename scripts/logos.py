@@ -337,6 +337,7 @@ def cmd_analyze(args):
                 centroid_match_threshold=args.centroid_threshold,
                 start_iteration=args.start_iter,
                 end_iteration=args.end_iter,
+                max_messages=args.max_messages,
                 verbose=not args.quiet,
             )
         except ImportError as e:
@@ -427,6 +428,8 @@ def main():
                            help="Start iteration (default: 0)")
     p_analyze.add_argument("--to", type=int, dest="end_iter", default=None,
                            help="End iteration (default: branch's current iteration)")
+    p_analyze.add_argument("-M", "--max-messages", type=int, dest="max_messages", default=None,
+                           help="Max messages to cluster per iteration (default: active_pool_size)")
     p_analyze.add_argument("--quiet", "-q", action="store_true",
                            help="Suppress progress output")
 

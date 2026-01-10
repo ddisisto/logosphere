@@ -224,6 +224,7 @@ def compute_cluster_timeline(
     centroid_match_threshold: float = 0.3,
     start_iteration: Optional[int] = None,
     end_iteration: Optional[int] = None,
+    max_messages: Optional[int] = None,
     verbose: bool = True,
 ) -> ClusterTimeline:
     """
@@ -232,7 +233,7 @@ def compute_cluster_timeline(
     Algorithm:
     1. Determine iteration range (start to end)
     2. For each iteration i in range:
-       a. Get messages visible to current branch at iteration i
+       a. Get messages in sliding window (last N messages up to iteration i)
        b. Get embeddings for those messages
        c. Run HDBSCAN clustering
        d. Match clusters to previous iteration by centroid proximity
@@ -245,6 +246,7 @@ def compute_cluster_timeline(
         centroid_match_threshold: Max cosine distance to consider clusters "same"
         start_iteration: First iteration to analyze (default: 0)
         end_iteration: Last iteration to analyze (default: branch's current iteration)
+        max_messages: Max messages to cluster per iteration (default: active_pool_size)
         verbose: Print progress
 
     Returns:
@@ -283,8 +285,11 @@ def compute_cluster_timeline(
     if min_iter > max_iter:
         min_iter, max_iter = max_iter, min_iter
 
+    # Determine window size (max messages to cluster per iteration)
+    window_size = max_messages if max_messages is not None else session.active_pool_size
+
     if verbose:
-        print(f"Computing cluster timeline for branch '{branch_name}' iterations {min_iter}-{max_iter}...")
+        print(f"Computing cluster timeline for branch '{branch_name}' iterations {min_iter}-{max_iter} (window={window_size})...")
 
     # Pre-index: build lookup for embeddings and group visible messages by round
     # This changes O(iterations × messages) to O(messages + iterations)
@@ -324,10 +329,17 @@ def compute_cluster_timeline(
         # Add messages from this iteration
         cumulative_visible.update(vids_by_round.get(iteration, []))
 
-        # Get embeddings and metadata for visible messages
+        # Apply sliding window: take only the last window_size messages (by vid)
+        all_vids = sorted(cumulative_visible)
+        if len(all_vids) > window_size:
+            windowed_vids = all_vids[-window_size:]
+        else:
+            windowed_vids = all_vids
+
+        # Get embeddings and metadata for windowed messages
         iter_embeddings = []
         iter_metadata = []
-        for vid in sorted(cumulative_visible):
+        for vid in windowed_vids:
             if vid in embeddings_by_vid:
                 iter_embeddings.append(embeddings_by_vid[vid])
                 iter_metadata.append(metadata_by_vid[vid])
