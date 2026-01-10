@@ -1,0 +1,9 @@
+# Example novelty content file
+# Each paragraph (separated by blank lines) is one item that may be injected.
+# Delete this file and create your own with actual content.
+
+What if consciousness is not a binary property but exists on a continuous spectrum across all matter?
+
+The map is not the territory, but perhaps the territory is also a map of something else entirely.
+
+Every model of reality is necessarily incomplete - Gödel showed this for formal systems, but it may apply to all understanding.

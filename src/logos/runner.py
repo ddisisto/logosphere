@@ -7,8 +7,10 @@ Integrates with Session for snapshot/intervention tracking.
 
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import dataclass
-from typing import Optional, Callable
+from pathlib import Path
+from typing import Optional, Callable, Any
 
 import numpy as np
 
@@ -37,6 +39,37 @@ from src.core.mind import invoke_mind
 from src.analysis.attractors import AttractorDetector
 
 from .config import LogosConfig, EXTERNAL_PROMPT_PREFIX
+
+# Project-level hooks directory
+HOOKS_DIR = Path(__file__).parent.parent.parent / "hooks"
+
+
+def _load_hook(hook_name: str) -> Callable:
+    """
+    Load a hook module by name from the hooks/ directory.
+
+    Args:
+        hook_name: Name of hook (e.g., "novelty" loads hooks/novelty.py)
+
+    Returns:
+        The hook function from the module
+
+    Raises:
+        FileNotFoundError: If hook module doesn't exist
+        AttributeError: If module doesn't have a 'hook' function
+    """
+    hook_path = HOOKS_DIR / f"{hook_name}.py"
+    if not hook_path.exists():
+        raise FileNotFoundError(f"Hook not found: {hook_path}")
+
+    spec = importlib.util.spec_from_file_location(hook_name, hook_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    if not hasattr(module, 'hook'):
+        raise AttributeError(f"Hook module {hook_name} must define a 'hook' function")
+
+    return module.hook
 
 
 @dataclass
@@ -168,6 +201,15 @@ class LogosRunner:
         self.thinking_trace: list[str] = []
         self.cluster_history: list[int] = []
 
+        # Load hooks from branch config
+        self.hooks: list[tuple[str, Callable]] = []
+        hook_names = session.config.get('hooks', [])
+        for hook_name in hook_names:
+            hook_fn = _load_hook(hook_name)
+            self.hooks.append((hook_name, hook_fn))
+            if config.verbose:
+                print(f"[hooks] Loaded: {hook_name}")
+
     @property
     def attractor_detector(self) -> AttractorDetector:
         """Lazy attractor detector creation."""
@@ -177,6 +219,19 @@ class LogosRunner:
                 min_cluster_size=self.config.min_cluster_size
             )
         return self._attractor_detector
+
+    def _run_hooks(self) -> None:
+        """
+        Run all enabled hooks for the current iteration.
+
+        Hooks are called with (session, iteration, runner).
+        Aborts on any hook failure.
+        """
+        for hook_name, hook_fn in self.hooks:
+            if self.config.verbose:
+                print(f"[hooks] Running: {hook_name}")
+            # Hook failure aborts the run
+            hook_fn(self.session, self.session.iteration, self)
 
     def seed_prompts(self, prompts: list[str]) -> None:
         """
@@ -203,6 +258,10 @@ class LogosRunner:
         Returns:
             Metrics for this iteration
         """
+        # Run pre-step hooks
+        if self.hooks:
+            self._run_hooks()
+
         # Sample from current branch's visible pool
         thoughts, sampled_ids = self.session.sample(self.config.k_samples)
 
