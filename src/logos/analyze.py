@@ -39,12 +39,14 @@ class ClusterTimeline:
     iterations: list[int]
     clusters: list[TrackedCluster]
     total_messages: int = 0
+    unclustered: list[int] = field(default_factory=list)  # Noise count per iteration
 
     def to_json(self) -> dict:
         """Convert to JSON-serializable dict."""
         return {
             "iterations": self.iterations,
             "total_messages": self.total_messages,
+            "unclustered": self.unclustered,
             "clusters": [
                 {
                     "id": c.id,
@@ -113,13 +115,48 @@ class ClusterTimeline:
         # Sort clusters by first_seen
         sorted_clusters = sorted(self.clusters, key=lambda c: c.first_seen)
 
-        # Find max label width for alignment
-        max_label_len = max(len(f"{c.id} ({sum(c.sizes):3d})") for c in sorted_clusters) if sorted_clusters else 0
+        # Find max label width for alignment (include unclustered label)
+        unclustered_label = f"unclustered ({sum(self.unclustered):3d})"
+        cluster_labels = [f"{c.id} ({sum(c.sizes):3d})" for c in sorted_clusters] if sorted_clusters else []
+        max_label_len = max(len(unclustered_label), max(len(l) for l in cluster_labels) if cluster_labels else 0)
 
         # Calculate available space for representative text
         # Format: "label: bar  rep" -> label + ": " + bar + "  "
         fixed_width = max_label_len + 2 + bar_width + 2
         rep_width = max(30, term_width - fixed_width)  # At least 30 chars for text
+
+        # Compute max_size across all data (clusters + unclustered) for consistent scaling
+        all_sizes = [max(c.sizes) for c in self.clusters] if self.clusters else []
+        if self.unclustered:
+            all_sizes.append(max(self.unclustered))
+        global_max_size = max(all_sizes) if all_sizes else 1
+
+        # Render unclustered swimlane at top
+        if self.unclustered:
+            label = unclustered_label.ljust(max_label_len)
+            bar = []
+            for size in self.unclustered:
+                if size == 0:
+                    bar.append("░")
+                elif size < global_max_size * 0.25:
+                    bar.append("▒")
+                elif size < global_max_size * 0.5:
+                    bar.append("▓")
+                else:
+                    bar.append("█")
+
+            # Scale bar to width
+            if len(bar) > bar_width:
+                scaled_bar = []
+                for j in range(bar_width):
+                    idx = int(j * len(bar) / bar_width)
+                    scaled_bar.append(bar[idx])
+                bar = scaled_bar
+            elif len(bar) < bar_width:
+                bar = bar + ["░"] * (bar_width - len(bar))
+
+            lines.append(f"{label}: {''.join(bar)}")
+            lines.append("")  # Blank line to separate from clusters
 
         for cluster in sorted_clusters:
             total_msgs = sum(c for c in cluster.sizes if c > 0)
@@ -128,14 +165,12 @@ class ClusterTimeline:
 
             # Build bar
             bar = []
-            max_size = max(max(c.sizes) for c in self.clusters) if self.clusters else 1
-
             for i, size in enumerate(cluster.sizes):
                 if size == 0:
                     bar.append("░")
-                elif size < max_size * 0.25:
+                elif size < global_max_size * 0.25:
                     bar.append("▒")
-                elif size < max_size * 0.5:
+                elif size < global_max_size * 0.5:
                     bar.append("▓")
                 else:
                     bar.append("█")
@@ -155,9 +190,11 @@ class ClusterTimeline:
             bar_str = "".join(bar)
 
             # Show truncated representative message (responsive to terminal width)
-            rep = cluster.representative[:rep_width].replace('\n', ' ')
-            if len(cluster.representative) > rep_width:
-                rep += "..."
+            rep_text = cluster.representative.replace('\n', ' ')
+            if len(rep_text) > rep_width:
+                rep = rep_text[:rep_width - 3] + "..."
+            else:
+                rep = rep_text
 
             lines.append(f"{label}: {bar_str}  {rep}")
 
@@ -321,6 +358,7 @@ def compute_cluster_timeline(
     tracked_clusters: dict[str, TrackedCluster] = {}
     next_cluster_id = 0
     iterations = list(range(min_iter, max_iter + 1))
+    unclustered_counts: list[int] = []  # Noise count per iteration
 
     # Previous iteration's cluster centroids for matching
     prev_centroids: dict[str, np.ndarray] = {}
@@ -353,6 +391,7 @@ def compute_cluster_timeline(
         if not iter_embeddings:
             for cluster in tracked_clusters.values():
                 cluster.sizes.append(0)
+            unclustered_counts.append(0)
             if verbose and iteration % 10 == 0:
                 print(f"  Iteration {iteration}: 0 msgs, 0 clusters")
             continue
@@ -360,9 +399,10 @@ def compute_cluster_timeline(
         iter_embeddings = np.array(iter_embeddings)
 
         if len(iter_embeddings) < min_cluster_size:
-            # Not enough data - record zero sizes for all tracked clusters
+            # Not enough data - all messages are noise
             for cluster in tracked_clusters.values():
                 cluster.sizes.append(0)
+            unclustered_counts.append(len(iter_embeddings))
             if verbose and iteration % 10 == 0:
                 print(f"  Iteration {iteration}: {len(iter_embeddings)} msgs, 0 clusters")
             continue
@@ -374,6 +414,10 @@ def compute_cluster_timeline(
             metric='euclidean',
         )
         labels = clusterer.fit_predict(iter_embeddings)
+
+        # Count unclustered (noise) points
+        noise_count = int((labels == -1).sum())
+        unclustered_counts.append(noise_count)
 
         # Extract current clusters
         current_clusters: dict[int, dict] = {}
@@ -477,4 +521,5 @@ def compute_cluster_timeline(
         iterations=iterations,
         clusters=clusters,
         total_messages=total_messages,
+        unclustered=unclustered_counts,
     )
