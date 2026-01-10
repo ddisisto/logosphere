@@ -101,5 +101,8 @@ class LogosConfig:
 
     @classmethod
     def from_dict(cls, data: dict) -> "LogosConfig":
-        """Create from dict."""
-        return cls(**data)
+        """Create from dict, filtering out unknown keys (e.g., hooks)."""
+        # Get valid field names from dataclass
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered)
