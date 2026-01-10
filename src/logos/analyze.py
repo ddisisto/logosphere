@@ -6,6 +6,7 @@ Retroactively computes cluster evolution with identity tracking via centroid mat
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -93,7 +94,7 @@ class ClusterTimeline:
             "phase_transitions": transitions,
         }
 
-    def to_swimlane_ascii(self, width: int = 40) -> str:
+    def to_swimlane_ascii(self, bar_width: int = 40) -> str:
         """Generate ASCII swimlane visualization."""
         if not self.iterations or not self.clusters:
             return "No cluster data available."
@@ -103,6 +104,9 @@ class ClusterTimeline:
         max_iter = max(self.iterations)
         iter_range = max_iter - min_iter + 1
 
+        # Get terminal width for responsive text truncation
+        term_width = shutil.get_terminal_size((120, 24)).columns
+
         lines.append(f"Cluster Timeline (iterations {min_iter}-{max_iter})")
         lines.append("")
 
@@ -111,6 +115,11 @@ class ClusterTimeline:
 
         # Find max label width for alignment
         max_label_len = max(len(f"{c.id} ({sum(c.sizes):3d})") for c in sorted_clusters) if sorted_clusters else 0
+
+        # Calculate available space for representative text
+        # Format: "label: bar  rep" -> label + ": " + bar + "  "
+        fixed_width = max_label_len + 2 + bar_width + 2
+        rep_width = max(30, term_width - fixed_width)  # At least 30 chars for text
 
         for cluster in sorted_clusters:
             total_msgs = sum(c for c in cluster.sizes if c > 0)
@@ -132,40 +141,37 @@ class ClusterTimeline:
                     bar.append("█")
 
             # Scale bar to width
-            if len(bar) > width:
+            if len(bar) > bar_width:
                 # Downsample
                 scaled_bar = []
-                for j in range(width):
-                    idx = int(j * len(bar) / width)
+                for j in range(bar_width):
+                    idx = int(j * len(bar) / bar_width)
                     scaled_bar.append(bar[idx])
                 bar = scaled_bar
-            elif len(bar) < width:
+            elif len(bar) < bar_width:
                 # Pad
-                bar = bar + ["░"] * (width - len(bar))
+                bar = bar + ["░"] * (bar_width - len(bar))
 
             bar_str = "".join(bar)
 
-            # Status annotation
-            if cluster.last_seen < max_iter:
-                status = f"  died at {cluster.last_seen}"
-            elif cluster.sizes[-1] == max(c.sizes[-1] for c in self.clusters):
-                status = f"  dominant, coh={cluster.coherence:.2f}"
-            else:
-                status = ""
+            # Show truncated representative message (responsive to terminal width)
+            rep = cluster.representative[:rep_width].replace('\n', ' ')
+            if len(cluster.representative) > rep_width:
+                rep += "..."
 
-            lines.append(f"{label}: {bar_str}{status}")
+            lines.append(f"{label}: {bar_str}  {rep}")
 
         # Add axis
         lines.append("")
         axis_label = " " * (max_label_len + 2)
         axis_ticks = []
-        for i in range(0, width + 1, width // 4):
-            iter_val = min_iter + int(i * iter_range / width)
+        for i in range(0, bar_width + 1, bar_width // 4):
+            iter_val = min_iter + int(i * iter_range / bar_width)
             axis_ticks.append(f"{iter_val}")
 
         # Build axis line
         axis_line = axis_label + "|"
-        tick_positions = [0, width // 4, width // 2, 3 * width // 4, width]
+        tick_positions = [0, bar_width // 4, bar_width // 2, 3 * bar_width // 4, bar_width]
         for i, pos in enumerate(tick_positions[:-1]):
             next_pos = tick_positions[i + 1]
             segment = "-" * (next_pos - pos - 1) + "+"
@@ -175,8 +181,8 @@ class ClusterTimeline:
         # Tick labels
         tick_labels = axis_label
         for i, pos in enumerate(tick_positions):
-            iter_val = min_iter + int(pos * iter_range / width) if iter_range > 0 else min_iter
-            tick_labels += f"{iter_val:<{width // 4}}" if i < len(tick_positions) - 1 else str(iter_val)
+            iter_val = min_iter + int(pos * iter_range / bar_width) if iter_range > 0 else min_iter
+            tick_labels += f"{iter_val:<{bar_width // 4}}" if i < len(tick_positions) - 1 else str(iter_val)
         lines.append(tick_labels[:len(axis_line)])
 
         # Summary
