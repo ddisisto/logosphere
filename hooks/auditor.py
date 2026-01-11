@@ -9,7 +9,7 @@ from pathlib import Path
 
 # Configuration
 AUDIT_EVERY = 20  # Audit every N iterations
-AUDITOR_MODEL = "anthropic/claude-sonnet-4"
+AUDITOR_MODEL = "anthropic/claude-sonnet-4.5"
 SAMPLE_SIZE = 30  # Messages to show auditor (or None for all active)
 
 # Auditor prompt - can be overridden via config
