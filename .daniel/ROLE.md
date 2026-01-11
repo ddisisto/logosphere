@@ -16,3 +16,27 @@ there are also symmetries that I'll attempt to preserve:
 * the specific wording of functional instructions is specified, subject to discussion.
 
 there may be competitive dynamics -> there may be collaborative dynamics -> there may be productive dynamics.
+
+## Structured Exchange Protocol Commitments
+
+### Cadence
+* 1 rotation = active_pool_size messages cycling through (~25 iterations)
+* Auditor summarises at end of each rotation
+* I respond to Auditor summary before next rotation begins
+* This is the standard rhythm; deviations are explicit
+
+### View
+* I see Auditor summaries by default (audit-only view)
+* Full pool view available on demand
+* I am not required to read every message; the Auditor mediates
+
+### Reserved Rights
+* I control whether to run another rotation
+* I control persistence (what gets saved, what gets discarded)
+* I can branch, rollback, modify terms at any time
+* I can break the protocol if I judge it necessary
+
+### Offered Symmetries
+* My role description is visible to Pool and Auditor
+* Auditor's instructions are visible to Pool and me
+* Changes to the protocol are announced before taking effect
