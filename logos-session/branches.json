@@ -1,0 +1,87 @@
+{
+  "current": "novelty",
+  "branches": {
+    "main": {
+      "name": "main",
+      "parent": null,
+      "parent_iteration": null,
+      "iteration": 1500,
+      "config": {
+        "k_samples": 8,
+        "active_pool_size": 75,
+        "convergence_threshold": null,
+        "convergence_coverage": null,
+        "stability_window": null,
+        "min_cluster_size": 3,
+        "model": "anthropic/claude-haiku-4.5",
+        "token_limit": 4000,
+        "system_prompt": "You receive thoughts from a shared pool.\n\nRead them. Think privately. Transmit thoughts worth keeping.\n\nTransmitted thoughts persist and compete for attention.\nThoughts not transmitted are forgotten.\nThoughts should be largely self-contained, but may reference or include others.\nThoughts may be retransmitted verbatim, and/or compressed, extended, decomposed, recomposed, etc.\n\nIncoming prompts from external sources are prefixed with '>>> '.\n\nFormat: Thoughts (multi-line, unconstrained) separated by --- on its own line. e.g.\n\nThis and all above is space for private thought and reasoning\n---\nThis is the first transmitted thought\n---\nThis is another\n---\n",
+        "embedding_model": "openai/text-embedding-3-small",
+        "embedding_dim": 1536,
+        "verbose": true
+      }
+    },
+    "control": {
+      "name": "control",
+      "parent": "main",
+      "parent_iteration": 885,
+      "iteration": 1501,
+      "config": {
+        "k_samples": 8,
+        "active_pool_size": 75,
+        "convergence_threshold": null,
+        "convergence_coverage": null,
+        "stability_window": null,
+        "min_cluster_size": 3,
+        "model": "anthropic/claude-haiku-4.5",
+        "token_limit": 4000,
+        "system_prompt": "You receive thoughts from a shared pool.\n\nRead them. Think privately. Transmit thoughts worth keeping.\n\nTransmitted thoughts persist and compete for attention.\nThoughts not transmitted are forgotten.\nThoughts should be largely self-contained, but may reference or include others.\nThoughts may be retransmitted verbatim, and/or compressed, extended, decomposed, recomposed, etc.\n\nIncoming prompts from external sources are prefixed with '>>> '.\n\nFormat: Thoughts (multi-line, unconstrained) separated by --- on its own line. e.g.\n\nThis and all above is space for private thought and reasoning\n---\nThis is the first transmitted thought\n---\nThis is another\n---\n",
+        "embedding_model": "openai/text-embedding-3-small",
+        "embedding_dim": 1536,
+        "verbose": true
+      },
+      "parent_vector_id": 3218
+    },
+    "question": {
+      "name": "question",
+      "parent": "main",
+      "parent_iteration": 1500,
+      "iteration": 1550,
+      "config": {
+        "k_samples": 8,
+        "active_pool_size": 75,
+        "convergence_threshold": null,
+        "convergence_coverage": null,
+        "stability_window": null,
+        "min_cluster_size": 3,
+        "model": "anthropic/claude-haiku-4.5",
+        "token_limit": 4000,
+        "system_prompt": "You receive thoughts from a shared pool.\n\nRead them. Think privately. Transmit thoughts worth keeping.\n\nTransmitted thoughts persist and compete for attention.\nThoughts not transmitted are forgotten.\nThoughts should be largely self-contained, but may reference or include others.\nThoughts may be retransmitted verbatim, and/or compressed, extended, decomposed, recomposed, etc.\n\nIncoming prompts from external sources are prefixed with '>>> '.\n\nFormat: Thoughts (multi-line, unconstrained) separated by --- on its own line. e.g.\n\nThis and all above is space for private thought and reasoning\n---\nThis is the first transmitted thought\n---\nThis is another\n---\n",
+        "embedding_model": "openai/text-embedding-3-small",
+        "embedding_dim": 1536,
+        "verbose": true
+      }
+    },
+    "novelty": {
+      "name": "novelty",
+      "parent": "main",
+      "parent_iteration": 1500,
+      "iteration": 2416,
+      "config": {
+        "k_samples": 8,
+        "active_pool_size": 75,
+        "convergence_threshold": null,
+        "convergence_coverage": null,
+        "stability_window": null,
+        "min_cluster_size": 3,
+        "model": "anthropic/claude-haiku-4.5",
+        "token_limit": 4000,
+        "system_prompt": "You receive thoughts from a shared pool.\n\nRead them. Think privately. Transmit thoughts worth keeping.\n\nTransmitted thoughts persist and compete for attention.\nThoughts not transmitted are forgotten.\nThoughts should be largely self-contained, but may reference or include others.\nThoughts may be retransmitted verbatim, and/or compressed, extended, decomposed, recomposed, etc.\n\nIncoming prompts from external sources are prefixed with '>>> '.\n\nFormat: Thoughts (multi-line, unconstrained) separated by --- on its own line. e.g.\n\nThis and all above is space for private thought and reasoning\n---\nThis is the first transmitted thought\n---\nThis is another\n---\n",
+        "embedding_model": "openai/text-embedding-3-small",
+        "embedding_dim": 1536,
+        "verbose": true,
+        "hooks": []
+      }
+    }
+  }
+}

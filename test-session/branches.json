@@ -1,0 +1,17 @@
+{
+  "current": "main",
+  "branches": {
+    "main": {
+      "name": "main",
+      "parent": null,
+      "parent_iteration": null,
+      "iteration": 63,
+      "config": {
+        "hooks": [
+          "self_report",
+          "auditor"
+        ]
+      }
+    }
+  }
+}

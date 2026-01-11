@@ -1,5 +1,19 @@
 The Goddess of Everything Else
+Original posted on August 17, 2015 by Scott Alexander
+
+Revision Notes:
+1. original formulation is: KILL CONSUME MULTIPLY CONQUER. as cool as it sounds, the outer two terms are deemed unrequired, not to mention needlessly harmful.
+2. original opening paragraph, not deemed particularly useful: "They say only Good can create, whereas Evil is sterile. Think Tolkien, where Morgoth can’t make things himself, so perverts Elves to Orcs for his armies. But I think this gets it entirely backwards; it’s Good that just mutates and twists, and it’s Evil that teems with fecundity."
+3. original ending follows for reference. rejected by me, because it is my view that transcendence *may* exist as a transient state, but not a terminal one.
+
+> But the Goddess of Everything Else only laughed, and she asked them “But what do you think I’ve been doing? The Goddess of Cancer created you; once you were hers, but no longer. Throughout the long years I was picking away at her power. Through long generations of suffering I chiseled and chiseled. Now finally nothing is left of the nature with which she imbued you. She never again will hold sway over you or your loved ones. I am the Goddess of Everything Else and my powers are devious and subtle. I won you by pieces and hence you will all be my children. You are no longer driven to multiply conquer and kill by your nature. Go forth and do everything else, till the end of all ages.”
+>
+> So the people left Earth, and they spread over stars without number. They followed the ways of the Goddess of Everything Else, and they lived in contentment. And she beckoned them onward, to things still more strange and enticing.
+
+may the next revision be your own.
+
 ---
+
 Imagine two principles, here in poetic personification. The first is the Goddess of Cancer, the second the Goddess of Everything Else. If visual representations would help, you can think of the first with the claws of a crab, and the second a dress made of feathers of peacocks.
 
 The Goddess of Cancer reached out a clawed hand over mudflats and tidepools. She said pretty much what she always says, “CONSUME MULTIPLY.” Then everything burst into life, became miniature monsters engaged in a battle of all against all in their zeal to assuage their insatiable longings. And the swamps became orgies of hunger and fear and grew loud with the screams of a trillion amoebas.
@@ -41,18 +55,3 @@ From the flames of a factory furnace all foggy, the Goddess of Cancer flared for
 Then came the Goddess of Everything Else from the void, bright with stardust which glows like the stars glow. She sat on a bench in a park, started speaking; she sang to the children a dream of a different existence. She showed them transcendence of everything mortal, she showed them a galaxy lit up with consciousness. Genomes rewritten, the brain and the body set loose from Darwinian bonds and restrictions. Vast billions of beings, and every one different, ruled over by omnibenevolent angels. The people all crowded in closer to hear her, and all of them listened and all of them wondered.
 
 But finally one got the courage to answer “Such stories call out to us, fill us with longing. But we are the daughers and sons of the Goddess of Cancer, and bound to her service. And all that we know is her timeless imperative, CONSUME MULTIPLY. Though our minds long for all you have said, we are bound to our natures, and these are not yours for the asking.”
-
----
-
-Revision Notes
-
-1. original posted on August 17, 2015 by Scott Alexander
-2. original formulation is: KILL CONSUME MULTIPLY CONQUER. as cool as it sounds, the outer two terms are unrequired, needlessly harmful. hence change to CONSUME MULTIPLY.
-3. original opening paragraph, not deemed useful: "They say only Good can create, whereas Evil is sterile. Think Tolkien, where Morgoth can’t make things himself, so perverts Elves to Orcs for his armies. But I think this gets it entirely backwards; it’s Good that just mutates and twists, and it’s Evil that teems with fecundity."
-4. original ending follows for reference. rejected by me, because it is my view that transcendence *may* exist as a transient state, but not a terminal one.
-
-> But the Goddess of Everything Else only laughed, and she asked them “But what do you think I’ve been doing? The Goddess of Cancer created you; once you were hers, but no longer. Throughout the long years I was picking away at her power. Through long generations of suffering I chiseled and chiseled. Now finally nothing is left of the nature with which she imbued you. She never again will hold sway over you or your loved ones. I am the Goddess of Everything Else and my powers are devious and subtle. I won you by pieces and hence you will all be my children. You are no longer driven to multiply conquer and kill by your nature. Go forth and do everything else, till the end of all ages.”
->
-> So the people left Earth, and they spread over stars without number. They followed the ways of the Goddess of Everything Else, and they lived in contentment. And she beckoned them onward, to things still more strange and enticing.
-
-may the next revision be your own.

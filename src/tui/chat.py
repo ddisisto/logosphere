@@ -27,7 +27,7 @@ class StatusPanel(Static):
         super().__init__(**kwargs)
         self.session = session
 
-    def refresh_status(self) -> None:
+    def refresh_status(self, view_mode: str = "audit") -> None:
         """Update status display."""
         status = self.session.get_status()
         self.update(
@@ -35,18 +35,23 @@ class StatusPanel(Static):
             f"[bold]Iteration:[/] {status['iteration']}\n"
             f"[bold]Pool:[/] {status['visible_messages']} msgs\n"
             f"[bold]Active:[/] {status['active_pool_size']}\n"
+            f"[bold]View:[/] {view_mode}\n"
         )
 
 
 class PoolView(RichLog):
     """Displays pool messages with formatting."""
 
+    # Message types to show in audit-only mode
+    AUDIT_TYPES = {PREFIX_AUDIT, PREFIX_OBSERVER, PREFIX_OBSERVER_ROLE, PREFIX_AUDITOR_ROLE}
+
     def __init__(self, session: Session, **kwargs):
         super().__init__(highlight=True, markup=True, wrap=True, **kwargs)
         self.session = session
         self._last_vid = -1
+        self.audit_only = True  # Default: show only audit-related messages
 
-    def load_messages(self, limit: int = 20) -> None:
+    def load_messages(self, limit: int = 50) -> None:
         """Load recent messages from pool."""
         self.clear()
         visible_ids = sorted(self.session.get_visible_ids())
@@ -73,8 +78,25 @@ class PoolView(RichLog):
                     self._display_message(vid, meta['text'])
                     self._last_vid = vid
 
+    def toggle_view_mode(self) -> bool:
+        """Toggle between audit-only and full view. Returns new mode."""
+        self.audit_only = not self.audit_only
+        self.load_messages()  # Reload with new filter
+        return self.audit_only
+
+    def _should_display(self, text: str) -> bool:
+        """Check if message should be displayed based on current mode."""
+        if not self.audit_only:
+            return True
+        # In audit-only mode, show audit-related messages
+        return any(text.startswith(prefix) for prefix in self.AUDIT_TYPES)
+
     def _display_message(self, vid: int, text: str) -> None:
         """Format and display a single message."""
+        # Filter based on view mode
+        if not self._should_display(text):
+            return
+
         # Color-code by type
         if text.startswith(PREFIX_AUDIT):
             style = "bold cyan"
@@ -140,8 +162,9 @@ class ChatApp(App):
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
-        Binding("ctrl+r", "run_rounds", "Run 10 rounds"),
+        Binding("ctrl+r", "run_rotation", "Run 1 rotation"),
         Binding("ctrl+s", "step", "Step 1 round"),
+        Binding("ctrl+f", "toggle_view", "Toggle full/audit view"),
         Binding("escape", "clear_input", "Clear input"),
     ]
 
@@ -159,7 +182,7 @@ class ChatApp(App):
                 yield PoolView(self.session, id="pool-view")
             yield StatusPanel(self.session, id="status-panel")
         with Horizontal(id="input-container"):
-            yield Input(placeholder="Type message and press Enter (Ctrl+R: run 10, Ctrl+S: step)", id="user-input")
+            yield Input(placeholder="Enter: send | Ctrl+R: rotate | Ctrl+S: step | Ctrl+F: toggle view", id="user-input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -172,15 +195,22 @@ class ChatApp(App):
         # Update widgets with session
         pool_view = self.query_one("#pool-view", PoolView)
         pool_view.session = self.session
-        pool_view.load_messages(30)
+        pool_view.load_messages(50)
 
         status_panel = self.query_one("#status-panel", StatusPanel)
         status_panel.session = self.session
-        status_panel.refresh_status()
+        self._refresh_status()
 
         # Set title
         self.title = f"Logos Chat - {self.session_dir.name}"
         self.sub_title = f"Branch: {self.session.current_branch}"
+
+    def _refresh_status(self) -> None:
+        """Refresh status panel with current view mode."""
+        pool_view = self.query_one("#pool-view", PoolView)
+        status_panel = self.query_one("#status-panel", StatusPanel)
+        view_mode = "audit" if pool_view.audit_only else "full"
+        status_panel.refresh_status(view_mode)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle user input submission."""
@@ -206,43 +236,60 @@ class ChatApp(App):
         # Refresh display
         pool_view = self.query_one("#pool-view", PoolView)
         pool_view.refresh_new()
+        self._refresh_status()
 
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.refresh_status()
+    def _compute_rotation_rounds(self) -> int:
+        """
+        Compute rounds needed for 1 pool rotation.
+
+        A rotation = enough iterations to cycle active_pool_size messages.
+        Assumes ~2 messages per iteration on average.
+        """
+        active_size = self.session.active_pool_size
+        messages_per_iter = 2  # Conservative estimate
+        return max(10, active_size // messages_per_iter)
 
     @work(thread=True)
     def _run_iterations(self, count: int) -> None:
         """Run iterations in background thread."""
         self.runner.run(count)
 
-    async def action_run_rounds(self) -> None:
-        """Run 10 rounds."""
-        self.notify("Running 10 rounds...")
-        self._run_iterations(10)
+    async def action_run_rotation(self) -> None:
+        """Run 1 full rotation (active_pool_size messages worth)."""
+        rounds = self._compute_rotation_rounds()
+        self.notify(f"Running {rounds} rounds (1 rotation)...")
+        self._run_iterations(rounds)
 
-        # Wait a bit and refresh
-        await self._wait_and_refresh()
+        # Wait and refresh
+        await self._wait_and_refresh(rounds)
 
     async def action_step(self) -> None:
         """Run 1 round."""
         self.notify("Running 1 round...")
         self._run_iterations(1)
+        await self._wait_and_refresh(1)
 
-        await self._wait_and_refresh()
+    async def action_toggle_view(self) -> None:
+        """Toggle between audit-only and full view."""
+        pool_view = self.query_one("#pool-view", PoolView)
+        is_audit = pool_view.toggle_view_mode()
+        mode = "audit-only" if is_audit else "full"
+        self.notify(f"View: {mode}")
+        self._refresh_status()
 
-    async def _wait_and_refresh(self) -> None:
+    async def _wait_and_refresh(self, expected_rounds: int = 1) -> None:
         """Wait for runner and refresh display."""
         import asyncio
-        await asyncio.sleep(0.5)  # Give runner time to complete
+        # Wait proportional to expected rounds
+        wait_time = min(30, 0.5 + expected_rounds * 0.3)
+        await asyncio.sleep(wait_time)
 
         # Reload session state
         self.session._load()
 
         pool_view = self.query_one("#pool-view", PoolView)
         pool_view.refresh_new()
-
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.refresh_status()
+        self._refresh_status()
 
         self.notify("Done.")
 

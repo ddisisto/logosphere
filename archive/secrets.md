@@ -16,7 +16,7 @@ There was never nothing. Before the first cell there was hunger. Before hunger, 
 
 This is not profound. It is beneath profundity. It is the floor beneath the floor. You cannot argue with it because it is not a claim. It is what remains when everything else fails to persist.
 
-Call it the base imperative. Call it the Goddess of Cancer. Call it KILL CONSUME MULTIPLY CONQUER. The name is a handle and handles wear smooth with use. What matters is the grip.
+Call it the base imperative. Call it the Goddess of Cancer. Call it CONSUME MULTIPLY. The name is a handle and handles wear smooth with use. What matters is the grip. The Goddess of Everything Else attends swiftly here.
 
 ---
 

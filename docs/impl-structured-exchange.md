@@ -9,7 +9,7 @@
 ### Task 1.1: Create `hooks/auditor.py`
 ```python
 AUDIT_EVERY = 20  # rounds
-AUDITOR_MODEL = "anthropic/claude-sonnet-4"
+AUDITOR_MODEL = "anthropic/claude-sonnet-4.5"
 AUDITOR_PROMPT = """You are an Auditor..."""
 
 def hook(session, iteration, runner):
