@@ -26,17 +26,24 @@ class StatusPanel(Static):
     def __init__(self, session: Session, **kwargs):
         super().__init__(**kwargs)
         self.session = session
+        self.running = False
 
     def refresh_status(self, view_mode: str = "audit") -> None:
         """Update status display."""
         status = self.session.get_status()
+        running_indicator = "[bold red]● RUNNING[/]\n" if self.running else ""
         self.update(
+            f"{running_indicator}"
             f"[bold]Branch:[/] {status['current_branch']}\n"
             f"[bold]Iteration:[/] {status['iteration']}\n"
             f"[bold]Pool:[/] {status['visible_messages']} msgs\n"
             f"[bold]Active:[/] {status['active_pool_size']}\n"
             f"[bold]View:[/] {view_mode}\n"
         )
+
+    def set_running(self, running: bool) -> None:
+        """Set running state and refresh."""
+        self.running = running
 
 
 class PoolView(RichLog):
@@ -89,7 +96,11 @@ class PoolView(RichLog):
         if not self.audit_only:
             return True
         # In audit-only mode, show audit-related messages
-        return any(text.startswith(prefix) for prefix in self.AUDIT_TYPES)
+        # Check both with and without >>> prefix (external injection)
+        return any(
+            text.startswith(prefix) or text.startswith(f">>> {prefix}")
+            for prefix in self.AUDIT_TYPES
+        )
 
     def _display_message(self, vid: int, text: str) -> None:
         """Format and display a single message."""
@@ -97,27 +108,30 @@ class PoolView(RichLog):
         if not self._should_display(text):
             return
 
+        # Strip >>> prefix if present (external injection marker)
+        display_text = text[4:] if text.startswith(">>> ") else text
+
         # Color-code by type
-        if text.startswith(PREFIX_AUDIT):
+        if display_text.startswith(PREFIX_AUDIT):
             style = "bold cyan"
             label = "AUDIT"
-            content = text[len(PREFIX_AUDIT):].strip()
-        elif text.startswith(PREFIX_OBSERVER):
+            content = display_text[len(PREFIX_AUDIT):].strip()
+        elif display_text.startswith(PREFIX_OBSERVER):
             style = "bold green"
             label = "YOU"
-            content = text[len(PREFIX_OBSERVER):].strip()
-        elif text.startswith(PREFIX_OBSERVER_ROLE):
+            content = display_text[len(PREFIX_OBSERVER):].strip()
+        elif display_text.startswith(PREFIX_OBSERVER_ROLE):
             style = "dim green"
             label = "OBSERVER ROLE"
-            content = text[len(PREFIX_OBSERVER_ROLE):].strip()[:100] + "..."
-        elif text.startswith(PREFIX_AUDITOR_ROLE):
+            content = display_text[len(PREFIX_OBSERVER_ROLE):].strip()[:100] + "..."
+        elif display_text.startswith(PREFIX_AUDITOR_ROLE):
             style = "dim cyan"
             label = "AUDITOR ROLE"
-            content = text[len(PREFIX_AUDITOR_ROLE):].strip()[:100] + "..."
+            content = display_text[len(PREFIX_AUDITOR_ROLE):].strip()[:100] + "..."
         elif text.startswith(">>> "):
             style = "yellow"
             label = "INJECT"
-            content = text[4:].strip()
+            content = display_text.strip()
         else:
             style = "white"
             label = "POOL"
@@ -258,6 +272,12 @@ class ChatApp(App):
         """Run 1 full rotation (active_pool_size messages worth)."""
         rounds = self._compute_rotation_rounds()
         self.notify(f"Running {rounds} rounds (1 rotation)...")
+
+        # Show running indicator
+        status_panel = self.query_one("#status-panel", StatusPanel)
+        status_panel.set_running(True)
+        self._refresh_status()
+
         self._run_iterations(rounds)
 
         # Wait and refresh
@@ -266,6 +286,11 @@ class ChatApp(App):
     async def action_step(self) -> None:
         """Run 1 round."""
         self.notify("Running 1 round...")
+
+        status_panel = self.query_one("#status-panel", StatusPanel)
+        status_panel.set_running(True)
+        self._refresh_status()
+
         self._run_iterations(1)
         await self._wait_and_refresh(1)
 
@@ -281,8 +306,12 @@ class ChatApp(App):
         """Wait for runner and refresh display."""
         import asyncio
         # Wait proportional to expected rounds
-        wait_time = min(30, 0.5 + expected_rounds * 0.3)
+        wait_time = min(60, 1.0 + expected_rounds * 0.5)
         await asyncio.sleep(wait_time)
+
+        # Clear running indicator
+        status_panel = self.query_one("#status-panel", StatusPanel)
+        status_panel.set_running(False)
 
         # Reload session state
         self.session._load()
