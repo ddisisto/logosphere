@@ -226,14 +226,18 @@ class ChatApp(App):
         self.sub_title = f"{self.session.current_branch}"
 
         # Auto-run to next audit if not at an audit point
-        self._check_and_run_to_audit()
+        self.call_later(self._startup_run)
 
-    async def _check_and_run_to_audit(self) -> None:
-        """If not at an audit point, run to the next one."""
+    async def _startup_run(self) -> None:
+        """On startup, run to first audit if needed."""
         current = self.session.iteration
         if current % AUDIT_EVERY != 0 or current == 0:
+            user_input = self.query_one("#user-input", Input)
+            user_input.disabled = True
             self.notify("Running to first audit...")
             await self.action_run_to_audit()
+            user_input.disabled = False
+            user_input.focus()
 
     def _refresh_status(self) -> None:
         """Refresh status panel with current view mode."""
@@ -242,20 +246,19 @@ class ChatApp(App):
         view_mode = "audit" if pool_view.audit_only else "full"
         status_panel.refresh_status(view_mode)
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle user input submission - inject and run to next audit."""
         text = event.value.strip()
         if not text:
             return
 
-        # Clear input
-        event.input.value = ""
+        user_input = self.query_one("#user-input", Input)
 
-        # Inject as observer response and run to next audit
-        self._inject_and_run(text)
+        # Clear and disable input while running
+        user_input.value = ""
+        user_input.disabled = True
 
-    def _inject_observer(self, text: str) -> None:
-        """Inject observer message."""
+        # Inject the message
         message = f"{PREFIX_OBSERVER} {text}"
         self.session.inject_message(
             text=message,
@@ -263,17 +266,17 @@ class ChatApp(App):
             notes="chat input",
         )
 
-    async def _inject_and_run(self, text: str) -> None:
-        """Inject observer message and run to next audit."""
-        # Inject the message
-        self._inject_observer(text)
-
-        # Refresh to show the injection
+        # Show injection immediately
         pool_view = self.query_one("#pool-view", PoolView)
         pool_view.refresh_new()
+        self._refresh_status()
 
         # Run to next audit
         await self.action_run_to_audit()
+
+        # Re-enable input
+        user_input.disabled = False
+        user_input.focus()
 
     def _compute_rounds_to_audit(self) -> int:
         """Compute rounds needed to reach next audit point."""
