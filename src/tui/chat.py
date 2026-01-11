@@ -20,6 +20,9 @@ from src.logos.runner import LogosRunner
 from src.exchange import PREFIX_AUDIT, PREFIX_OBSERVER, PREFIX_OBSERVER_ROLE, PREFIX_AUDITOR_ROLE
 
 
+AUDIT_EVERY = 20  # Must match hooks/auditor.py
+
+
 class StatusPanel(Static):
     """Displays session status."""
 
@@ -27,11 +30,23 @@ class StatusPanel(Static):
         super().__init__(**kwargs)
         self.session = session
         self.running = False
+        self.progress = ""  # e.g., "5/20 until audit"
 
     def refresh_status(self, view_mode: str = "audit") -> None:
         """Update status display."""
         status = self.session.get_status()
-        running_indicator = "[bold red]● RUNNING[/]\n" if self.running else ""
+
+        # Running indicator with progress
+        if self.running:
+            running_indicator = f"[bold red]● RUNNING[/]\n{self.progress}\n"
+        else:
+            # Show rounds until next audit
+            current = status['iteration']
+            until_audit = AUDIT_EVERY - (current % AUDIT_EVERY)
+            if until_audit == AUDIT_EVERY:
+                until_audit = 0
+            running_indicator = f"[dim]{until_audit} until audit[/]\n"
+
         self.update(
             f"{running_indicator}"
             f"[bold]Branch:[/] {status['current_branch']}\n"
@@ -41,9 +56,10 @@ class StatusPanel(Static):
             f"[bold]View:[/] {view_mode}\n"
         )
 
-    def set_running(self, running: bool) -> None:
-        """Set running state and refresh."""
+    def set_running(self, running: bool, progress: str = "") -> None:
+        """Set running state."""
         self.running = running
+        self.progress = progress
 
 
 class PoolView(RichLog):
@@ -176,7 +192,7 @@ class ChatApp(App):
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
-        Binding("ctrl+r", "run_rotation", "Run 1 rotation"),
+        Binding("ctrl+r", "run_to_audit", "Run to next audit"),
         Binding("ctrl+s", "step", "Step 1 round"),
         Binding("ctrl+f", "toggle_view", "Toggle full/audit view"),
         Binding("escape", "clear_input", "Clear input"),
@@ -196,7 +212,7 @@ class ChatApp(App):
                 yield PoolView(self.session, id="pool-view")
             yield StatusPanel(self.session, id="status-panel")
         with Horizontal(id="input-container"):
-            yield Input(placeholder="Enter: send | Ctrl+R: rotate | Ctrl+S: step | Ctrl+F: toggle view", id="user-input")
+            yield Input(placeholder="Enter: send+run to audit | Ctrl+S: step | Ctrl+F: toggle view", id="user-input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -227,7 +243,7 @@ class ChatApp(App):
         status_panel.refresh_status(view_mode)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle user input submission."""
+        """Handle user input submission - inject and run to next audit."""
         text = event.value.strip()
         if not text:
             return
@@ -235,11 +251,11 @@ class ChatApp(App):
         # Clear input
         event.input.value = ""
 
-        # Inject as observer response
-        self._inject_observer(text)
+        # Inject as observer response and run to next audit
+        self._inject_and_run(text)
 
     def _inject_observer(self, text: str) -> None:
-        """Inject observer message and refresh."""
+        """Inject observer message."""
         message = f"{PREFIX_OBSERVER} {text}"
         self.session.inject_message(
             text=message,
@@ -247,52 +263,88 @@ class ChatApp(App):
             notes="chat input",
         )
 
-        # Refresh display
+    async def _inject_and_run(self, text: str) -> None:
+        """Inject observer message and run to next audit."""
+        # Inject the message
+        self._inject_observer(text)
+
+        # Refresh to show the injection
         pool_view = self.query_one("#pool-view", PoolView)
         pool_view.refresh_new()
-        self._refresh_status()
 
-    def _compute_rotation_rounds(self) -> int:
-        """
-        Compute rounds needed for 1 pool rotation.
+        # Run to next audit
+        await self.action_run_to_audit()
 
-        A rotation = enough iterations to cycle active_pool_size messages.
-        Assumes ~2 messages per iteration on average.
-        """
-        active_size = self.session.active_pool_size
-        messages_per_iter = 2  # Conservative estimate
-        return max(10, active_size // messages_per_iter)
+    def _compute_rounds_to_audit(self) -> int:
+        """Compute rounds needed to reach next audit point."""
+        current = self.session.iteration
+        until_audit = AUDIT_EVERY - (current % AUDIT_EVERY)
+        if until_audit == 0:
+            until_audit = AUDIT_EVERY
+        return until_audit
 
     @work(thread=True)
-    def _run_iterations(self, count: int) -> None:
+    def _run_iterations_sync(self, count: int) -> None:
         """Run iterations in background thread."""
         self.runner.run(count)
 
-    async def action_run_rotation(self) -> None:
-        """Run 1 full rotation (active_pool_size messages worth)."""
-        rounds = self._compute_rotation_rounds()
-        self.notify(f"Running {rounds} rounds (1 rotation)...")
+    async def action_run_to_audit(self) -> None:
+        """Run until next audit point."""
+        rounds = self._compute_rounds_to_audit()
+        self.notify(f"Running {rounds} rounds to next audit...")
 
         # Show running indicator
         status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.set_running(True)
+        status_panel.set_running(True, f"0/{rounds}")
         self._refresh_status()
 
-        self._run_iterations(rounds)
+        # Run with progress updates
+        start_iteration = self.session.iteration
+        self._run_iterations_sync(rounds)
 
-        # Wait and refresh
-        await self._wait_and_refresh(rounds)
+        # Poll for progress while running
+        await self._wait_with_progress(rounds, start_iteration)
+
+    async def _wait_with_progress(self, total_rounds: int, start_iteration: int) -> None:
+        """Poll for progress and update display."""
+        import asyncio
+
+        status_panel = self.query_one("#status-panel", StatusPanel)
+        pool_view = self.query_one("#pool-view", PoolView)
+
+        # Poll until complete
+        while True:
+            await asyncio.sleep(1.0)
+
+            # Reload to check progress
+            self.session._load()
+            current = self.session.iteration
+            completed = current - start_iteration
+
+            if completed >= total_rounds:
+                break
+
+            # Update progress
+            status_panel.set_running(True, f"{completed}/{total_rounds}")
+            self._refresh_status()
+
+        # Done - clear running state
+        status_panel.set_running(False)
+        self.session._load()
+        pool_view.refresh_new()
+        self._refresh_status()
+        self.notify("Audit complete. Your response?")
 
     async def action_step(self) -> None:
         """Run 1 round."""
         self.notify("Running 1 round...")
 
         status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.set_running(True)
+        status_panel.set_running(True, "1/1")
         self._refresh_status()
 
-        self._run_iterations(1)
-        await self._wait_and_refresh(1)
+        self._run_iterations_sync(1)
+        await self._wait_and_refresh()
 
     async def action_toggle_view(self) -> None:
         """Toggle between audit-only and full view."""
@@ -302,12 +354,10 @@ class ChatApp(App):
         self.notify(f"View: {mode}")
         self._refresh_status()
 
-    async def _wait_and_refresh(self, expected_rounds: int = 1) -> None:
-        """Wait for runner and refresh display."""
+    async def _wait_and_refresh(self) -> None:
+        """Wait for step to complete and refresh display."""
         import asyncio
-        # Wait proportional to expected rounds
-        wait_time = min(60, 1.0 + expected_rounds * 0.5)
-        await asyncio.sleep(wait_time)
+        await asyncio.sleep(2.0)
 
         # Clear running indicator
         status_panel = self.query_one("#status-panel", StatusPanel)
