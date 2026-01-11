@@ -30,7 +30,7 @@ class StatusPanel(Static):
         super().__init__(**kwargs)
         self.session = session
         self.running = False
-        self.progress = ""  # e.g., "5/20 until audit"
+        self.progress = ""
 
     def refresh_status(self, view_mode: str = "audit") -> None:
         """Update status display."""
@@ -38,21 +38,13 @@ class StatusPanel(Static):
 
         # Running indicator with progress
         if self.running:
-            running_indicator = f"[bold red]● RUNNING[/]\n{self.progress}\n"
+            indicator = f"[bold cyan]● thinking...[/]\n{self.progress}\n"
         else:
-            # Show rounds until next audit
-            current = status['iteration']
-            until_audit = AUDIT_EVERY - (current % AUDIT_EVERY)
-            if until_audit == AUDIT_EVERY:
-                until_audit = 0
-            running_indicator = f"[dim]{until_audit} until audit[/]\n"
+            indicator = "[bold green]● ready[/]\n"
 
         self.update(
-            f"{running_indicator}"
-            f"[bold]Branch:[/] {status['current_branch']}\n"
-            f"[bold]Iteration:[/] {status['iteration']}\n"
-            f"[bold]Pool:[/] {status['visible_messages']} msgs\n"
-            f"[bold]Active:[/] {status['active_pool_size']}\n"
+            f"{indicator}"
+            f"[bold]Pool:[/] {status['visible_messages']} thoughts\n"
             f"[bold]View:[/] {view_mode}\n"
         )
 
@@ -153,8 +145,8 @@ class PoolView(RichLog):
             label = "POOL"
             content = text.strip()
 
-        # Truncate long messages for display
-        if len(content) > 300:
+        # Truncate pool messages, but show AUDIT in full
+        if label not in ("AUDIT", "YOU") and len(content) > 300:
             content = content[:300] + "..."
 
         self.write(f"[{style}][{label}][/] {content}")
@@ -192,8 +184,6 @@ class ChatApp(App):
 
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit"),
-        Binding("ctrl+r", "run_to_audit", "Run to next audit"),
-        Binding("ctrl+s", "step", "Step 1 round"),
         Binding("ctrl+f", "toggle_view", "Toggle full/audit view"),
         Binding("escape", "clear_input", "Clear input"),
     ]
@@ -212,7 +202,7 @@ class ChatApp(App):
                 yield PoolView(self.session, id="pool-view")
             yield StatusPanel(self.session, id="status-panel")
         with Horizontal(id="input-container"):
-            yield Input(placeholder="Enter: send+run to audit | Ctrl+S: step | Ctrl+F: toggle view", id="user-input")
+            yield Input(placeholder="Type your response and press Enter", id="user-input")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -232,8 +222,18 @@ class ChatApp(App):
         self._refresh_status()
 
         # Set title
-        self.title = f"Logos Chat - {self.session_dir.name}"
-        self.sub_title = f"Branch: {self.session.current_branch}"
+        self.title = f"Logos Chat"
+        self.sub_title = f"{self.session.current_branch}"
+
+        # Auto-run to next audit if not at an audit point
+        self._check_and_run_to_audit()
+
+    async def _check_and_run_to_audit(self) -> None:
+        """If not at an audit point, run to the next one."""
+        current = self.session.iteration
+        if current % AUDIT_EVERY != 0 or current == 0:
+            self.notify("Running to first audit...")
+            await self.action_run_to_audit()
 
     def _refresh_status(self) -> None:
         """Refresh status panel with current view mode."""
@@ -311,6 +311,7 @@ class ChatApp(App):
 
         status_panel = self.query_one("#status-panel", StatusPanel)
         pool_view = self.query_one("#pool-view", PoolView)
+        start_pool_size = self.session.vector_db.size()
 
         # Poll until complete
         while True:
@@ -320,12 +321,14 @@ class ChatApp(App):
             self.session._load()
             current = self.session.iteration
             completed = current - start_iteration
+            new_thoughts = self.session.vector_db.size() - start_pool_size
 
             if completed >= total_rounds:
                 break
 
-            # Update progress
-            status_panel.set_running(True, f"{completed}/{total_rounds}")
+            # Update progress: thoughts added / target, current round
+            target_thoughts = total_rounds * 2  # Rough estimate
+            status_panel.set_running(True, f"thoughts {new_thoughts} (round {current})")
             self._refresh_status()
 
         # Done - clear running state
@@ -333,18 +336,7 @@ class ChatApp(App):
         self.session._load()
         pool_view.refresh_new()
         self._refresh_status()
-        self.notify("Audit complete. Your response?")
-
-    async def action_step(self) -> None:
-        """Run 1 round."""
-        self.notify("Running 1 round...")
-
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.set_running(True, "1/1")
-        self._refresh_status()
-
-        self._run_iterations_sync(1)
-        await self._wait_and_refresh()
+        self.notify("Your response?")
 
     async def action_toggle_view(self) -> None:
         """Toggle between audit-only and full view."""
@@ -353,24 +345,6 @@ class ChatApp(App):
         mode = "audit-only" if is_audit else "full"
         self.notify(f"View: {mode}")
         self._refresh_status()
-
-    async def _wait_and_refresh(self) -> None:
-        """Wait for step to complete and refresh display."""
-        import asyncio
-        await asyncio.sleep(2.0)
-
-        # Clear running indicator
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.set_running(False)
-
-        # Reload session state
-        self.session._load()
-
-        pool_view = self.query_one("#pool-view", PoolView)
-        pool_view.refresh_new()
-        self._refresh_status()
-
-        self.notify("Done.")
 
     def action_clear_input(self) -> None:
         """Clear input field."""
