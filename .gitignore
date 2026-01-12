@@ -28,12 +28,7 @@ output/
 Thumbs.db
 
 # User
-.daniel/logos-session/
-.daniel/*.bkp/
-.daniel/*.bkp2/
-.daniel/p*.md
+.daniel/
 
 # Session data (keep in local dirs, not repo)
-logos-session/
-test-session/
 *-session/

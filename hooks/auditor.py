@@ -62,6 +62,17 @@ def hook(session, iteration: int, runner) -> None:
     auditor_prompt = session.config.get('auditor_prompt', AUDITOR_PROMPT)
     auditor_model = session.config.get('auditor_model', AUDITOR_MODEL)
 
+    # Import prefixes
+    from src.exchange import PREFIX_AUDITOR_ROLE
+
+    # Inject AUDITOR ROLE first (transparency - pool sees auditor's instructions)
+    auditor_role_message = f"{PREFIX_AUDITOR_ROLE} {auditor_prompt}"
+    session.inject_message(
+        text=auditor_role_message,
+        embedding_client=runner.embedding_client,
+        notes=f"auditor hook (role) @ iteration {iteration}",
+    )
+
     # Invoke auditor
     summary = invoke_auditor(
         pool_messages=messages,
@@ -70,12 +81,12 @@ def hook(session, iteration: int, runner) -> None:
         model=auditor_model,
     )
 
-    # Inject summary into pool
+    # Inject AUDIT summary
     audit_message = format_audit_message(summary)
     session.inject_message(
         text=audit_message,
         embedding_client=runner.embedding_client,
-        notes=f"auditor hook @ iteration {iteration}",
+        notes=f"auditor hook (summary) @ iteration {iteration}",
     )
 
     # Preview

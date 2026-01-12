@@ -11,6 +11,7 @@ Usage:
     python scripts/logos.py switch main
     python scripts/logos.py status
     python scripts/logos.py list
+    python scripts/logos.py chat
 """
 
 import argparse
@@ -25,6 +26,7 @@ from src.core.embedding_client import EmbeddingClient
 from src.logos.config import LogosConfig
 from src.logos.runner import LogosRunner
 from src.logos.analyze import compute_cluster_timeline
+from src.tui.chat import run_chat
 
 
 # Session directory tracking (for commands that need an open session)
@@ -323,6 +325,26 @@ def cmd_log(args):
     return 0
 
 
+def cmd_chat(args):
+    """Launch interactive chat TUI."""
+    session_dir = get_current_session_dir()
+    session = Session(session_dir)
+
+    # Chat mode manages audit cycle directly (not via hooks)
+    # Disable hooks to avoid double-invocation
+    current_hooks = session.config.get('hooks', [])
+    if current_hooks:
+        print(f"Note: Disabling hooks {current_hooks} for chat mode")
+        print("(Chat manages audit cycle directly)")
+        session.config['hooks'] = []
+        session._save()
+
+    print(f"Opening chat for session: {session_dir}")
+    print(f"Branch: {session.current_branch}")
+    run_chat(session_dir)
+    return 0
+
+
 def cmd_analyze(args):
     """Analyze session dynamics."""
     import json as json_mod
@@ -433,6 +455,9 @@ def main():
     p_analyze.add_argument("--quiet", "-q", action="store_true",
                            help="Suppress progress output")
 
+    # chat
+    p_chat = subparsers.add_parser("chat", help="Launch interactive chat TUI")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -453,6 +478,7 @@ def main():
         "config": cmd_config,
         "log": cmd_log,
         "analyze": cmd_analyze,
+        "chat": cmd_chat,
     }
 
     try:

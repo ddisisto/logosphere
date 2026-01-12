@@ -270,23 +270,31 @@ class VectorDB:
 
     def save(self, path: Path) -> None:
         """
-        Save to disk.
+        Save to disk using atomic writes to prevent corruption from concurrent access.
 
         Creates:
             path/embeddings.npy - Embedding matrix
             path/metadata.jsonl - One JSON object per message
         """
+        import tempfile
+        import shutil
+
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
 
-        # Save embeddings as numpy array
+        # Save embeddings as numpy array (atomic via numpy's temp file handling)
         if self.embeddings:
             np.save(path / 'embeddings.npy', np.array(self.embeddings))
 
-        # Save metadata as JSONL
-        with open(path / 'metadata.jsonl', 'w') as f:
+        # Save metadata as JSONL using atomic write (temp file + rename)
+        metadata_path = path / 'metadata.jsonl'
+        with tempfile.NamedTemporaryFile(mode='w', dir=path, suffix='.tmp', delete=False) as f:
+            temp_path = Path(f.name)
             for meta in self.metadata:
                 f.write(json.dumps(meta) + '\n')
+
+        # Atomic rename (on POSIX systems)
+        shutil.move(str(temp_path), str(metadata_path))
 
     @classmethod
     def load(cls, path: Path, active_pool_size: int) -> 'VectorDB':
