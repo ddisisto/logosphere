@@ -641,3 +641,56 @@ class ClusterManager:
                 for c in sorted(self.registry.all_clusters(), key=lambda x: x.created_at)
             ],
         }
+
+    def get_cluster_members(
+        self,
+        cluster_id: str,
+        session,
+        limit: int = 5,
+    ) -> list[dict]:
+        """
+        Get detailed info for all members of a cluster.
+
+        Args:
+            cluster_id: The cluster to inspect
+            session: Session object for vector_db access
+            limit: Max members to return (0 = all)
+
+        Returns:
+            List of member dicts with metadata, distance, and text
+        """
+        if not self.initialized or self.registry is None:
+            return []
+
+        cluster = self.registry.get(cluster_id)
+        if not cluster:
+            return []
+
+        vector_db = session.vector_db
+        member_vids = self.assignments.get_cluster_members(cluster_id)
+
+        members = []
+        for vid in member_vids:
+            meta = vector_db.get_message(vid)
+            if not meta:
+                continue
+
+            embedding = vector_db.embeddings[vid]
+            distance = _cosine_distance(embedding, cluster.centroid)
+
+            members.append({
+                "vector_id": vid,
+                "round": meta.get("round", 0),
+                "branch": meta.get("branch", "unknown"),
+                "mind_id": meta.get("mind_id", 0),
+                "distance": float(distance),
+                "text": meta.get("text", ""),
+            })
+
+        # Sort by distance (closest to centroid first)
+        members.sort(key=lambda x: x["distance"])
+
+        if limit > 0:
+            members = members[:limit]
+
+        return members

@@ -381,6 +381,47 @@ def cmd_cluster(args):
                 print(f"  Representative: {c['representative']}")
                 print()
 
+    elif args.subcommand == "show":
+        if not cluster_mgr.initialized:
+            print("Clustering not initialized. Run 'logos cluster bootstrap' first.")
+            return 1
+
+        cluster_id = args.cluster_id
+        limit = args.limit
+
+        # Get cluster info
+        cluster = cluster_mgr.registry.get(cluster_id) if cluster_mgr.registry else None
+        if not cluster:
+            print(f"Cluster '{cluster_id}' not found.")
+            print("Available clusters:")
+            for c in cluster_mgr.registry.all_clusters():
+                print(f"  {c.id}")
+            return 1
+
+        members = cluster_mgr.get_cluster_members(cluster_id, session, limit=limit)
+        total_members = len(cluster_mgr.assignments.get_cluster_members(cluster_id))
+
+        if args.json:
+            print(json_mod.dumps({
+                "cluster_id": cluster_id,
+                "total_members": total_members,
+                "showing": len(members),
+                "created_at": cluster.created_at,
+                "last_active": cluster.last_active,
+                "members": members,
+            }, indent=2))
+        else:
+            print(f"Cluster: {cluster_id}")
+            print(f"Members: {total_members} total" + (f", showing {len(members)}" if limit > 0 else ""))
+            print(f"Created: iteration {cluster.created_at}, Last active: {cluster.last_active}")
+            print("=" * 60)
+
+            for i, m in enumerate(members, 1):
+                print(f"\n[{i}] vector_id={m['vector_id']} | round={m['round']} | "
+                      f"branch={m['branch']} | mind_id={m['mind_id']} | dist={m['distance']:.4f}")
+                print("-" * 60)
+                print(m['text'])
+
     return 0
 
 
@@ -475,6 +516,13 @@ def main():
     # cluster analyze
     p_cluster_analyze = cluster_subparsers.add_parser("analyze", help="Analyze stable cluster assignments")
     p_cluster_analyze.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # cluster show
+    p_cluster_show = cluster_subparsers.add_parser("show", help="Show members of a specific cluster")
+    p_cluster_show.add_argument("cluster_id", help="Cluster ID (e.g., cluster_0)")
+    p_cluster_show.add_argument("--limit", "-n", type=int, default=5,
+                                help="Max members to show (0 = all, default: 5)")
+    p_cluster_show.add_argument("--json", action="store_true", help="Output as JSON")
 
     args = parser.parse_args()
 
