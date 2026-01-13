@@ -110,6 +110,8 @@ Interventions operate on the *pool*, not on *protocols*:
 
 These steer dynamics without telling the model what to do.
 
+UPDATE: No interventions implemented or planned, other than conversational ones (inject message for sampling by pool, clearly marked). Observe only.
+
 ---
 
 ## Implementation Status
