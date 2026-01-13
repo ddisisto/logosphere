@@ -39,6 +39,7 @@ from src.core.mind import invoke_mind
 from src.analysis.attractors import AttractorDetector
 
 from .config import LogosConfig, EXTERNAL_PROMPT_PREFIX
+from .clustering import ClusterManager
 
 # Project-level hooks directory
 HOOKS_DIR = Path(__file__).parent.parent.parent / "hooks"
@@ -210,6 +211,11 @@ class LogosRunner:
             if config.verbose:
                 print(f"[hooks] Loaded: {hook_name}")
 
+        # Incremental clustering (auto-process if bootstrapped)
+        self.cluster_mgr = ClusterManager(session.session_dir)
+        if self.cluster_mgr.initialized and config.verbose:
+            print(f"[clustering] Incremental clustering enabled")
+
     @property
     def attractor_detector(self) -> AttractorDetector:
         """Lazy attractor detector creation."""
@@ -311,6 +317,20 @@ class LogosRunner:
 
         # Increment iteration
         self.session.iteration += 1
+
+        # Incremental clustering (if bootstrapped)
+        if self.cluster_mgr.initialized:
+            cluster_stats = self.cluster_mgr.process(
+                self.session,
+                self.session.iteration,
+                centroid_threshold=self.session.config.get('centroid_threshold', 0.3),
+                min_cluster_size=self.config.min_cluster_size,
+                noise_window=self.session.config.get('noise_window', 20),
+                verbose=False,  # Don't spam output during run
+            )
+            if self.config.verbose and (cluster_stats['assigned'] > 0 or cluster_stats['new_clusters'] > 0):
+                print(f"  [clustering] assigned={cluster_stats['assigned']}, "
+                      f"new_clusters={cluster_stats['new_clusters']}")
 
         return metrics
 
