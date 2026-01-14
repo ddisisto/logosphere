@@ -23,6 +23,7 @@ from src.core.embedding_client import EmbeddingClient
 from src.logos.config import LogosConfig
 from src.logos.runner import LogosRunner
 from src.logos.analyze import compute_cluster_timeline
+from src.logos.clustering import ClusterManager
 from src.tui.chat import run_chat
 
 
@@ -308,6 +309,122 @@ def cmd_analyze(args):
     return 0
 
 
+def cmd_cluster(args):
+    """Manage incremental clustering."""
+    import json as json_mod
+    session_dir = get_current_session_dir()
+    session = Session(session_dir)
+    cluster_mgr = ClusterManager(session_dir)
+
+    if args.subcommand == "status":
+        status = cluster_mgr.get_status()
+        if args.json:
+            print(json_mod.dumps(status, indent=2))
+        elif not status["initialized"]:
+            print("Clustering not initialized.")
+            print("Run 'logos cluster bootstrap' to initialize.")
+        else:
+            print(f"Clusters: {status['num_clusters']}")
+            print(f"Assigned: {status['total_assigned']}")
+            print(f"Noise: {status['noise']}")
+            print(f"Fossil: {status['fossil']}")
+            print()
+            for c in status["clusters"]:
+                dormant = " (dormant)" if c["last_active"] < session.iteration - 10 else ""
+                print(f"  {c['id']}: {c['members']} members, active {c['last_active']}{dormant}")
+                print(f"    {c['representative']}")
+                print()
+
+    elif args.subcommand == "bootstrap":
+        if cluster_mgr.initialized and not args.force:
+            print("Clustering already initialized. Use --force to re-bootstrap.")
+            return 1
+
+        config = LogosConfig.from_dict(session.config) if session.config else LogosConfig()
+        stats = cluster_mgr.bootstrap(
+            session,
+            min_cluster_size=args.min_cluster_size or config.min_cluster_size,
+            verbose=not args.quiet,
+        )
+
+        if args.json:
+            print(json_mod.dumps(stats, indent=2))
+        else:
+            print(f"Bootstrap complete: {stats['clusters']} clusters, "
+                  f"{stats['assigned']} assigned, {stats['noise']} noise")
+
+    elif args.subcommand == "analyze":
+        if not cluster_mgr.initialized:
+            print("Clustering not initialized. Run 'logos cluster bootstrap' first.")
+            return 1
+
+        status = cluster_mgr.get_status()
+
+        if args.json:
+            print(json_mod.dumps(status, indent=2))
+        else:
+            print(f"Cluster Analysis (stable assignments)")
+            print(f"=" * 40)
+            print(f"Total clusters: {status['num_clusters']}")
+            print(f"Assigned messages: {status['total_assigned']}")
+            print(f"Noise: {status['noise']}")
+            print(f"Fossilized: {status['fossil']}")
+            print()
+
+            # Sort by member count descending
+            sorted_clusters = sorted(status["clusters"], key=lambda x: x["members"], reverse=True)
+
+            for c in sorted_clusters:
+                active_status = "active" if c["last_active"] >= session.iteration - 10 else "dormant"
+                print(f"{c['id']} ({c['members']} members, {active_status})")
+                print(f"  Created: iteration {c['created_at']}, Last active: {c['last_active']}")
+                print(f"  Representative: {c['representative']}")
+                print()
+
+    elif args.subcommand == "show":
+        if not cluster_mgr.initialized:
+            print("Clustering not initialized. Run 'logos cluster bootstrap' first.")
+            return 1
+
+        cluster_id = args.cluster_id
+        limit = args.limit
+
+        # Get cluster info
+        cluster = cluster_mgr.registry.get(cluster_id) if cluster_mgr.registry else None
+        if not cluster:
+            print(f"Cluster '{cluster_id}' not found.")
+            print("Available clusters:")
+            for c in cluster_mgr.registry.all_clusters():
+                print(f"  {c.id}")
+            return 1
+
+        members = cluster_mgr.get_cluster_members(cluster_id, session, limit=limit)
+        total_members = len(cluster_mgr.assignments.get_cluster_members(cluster_id))
+
+        if args.json:
+            print(json_mod.dumps({
+                "cluster_id": cluster_id,
+                "total_members": total_members,
+                "showing": len(members),
+                "created_at": cluster.created_at,
+                "last_active": cluster.last_active,
+                "members": members,
+            }, indent=2))
+        else:
+            print(f"Cluster: {cluster_id}")
+            print(f"Members: {total_members} total" + (f", showing {len(members)}" if limit > 0 else ""))
+            print(f"Created: iteration {cluster.created_at}, Last active: {cluster.last_active}")
+            print("=" * 60)
+
+            for i, m in enumerate(members, 1):
+                print(f"\n[{i}] vector_id={m['vector_id']} | round={m['round']} | "
+                      f"mind_id={m['mind_id']} | dist={m['distance']:.4f}")
+                print("-" * 60)
+                print(m['text'])
+
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Logos - Pool-based reasoning sessions"
@@ -378,6 +495,35 @@ def main():
     # chat
     p_chat = subparsers.add_parser("chat", help="Launch interactive chat TUI")
 
+    # cluster (with subcommands)
+    p_cluster = subparsers.add_parser("cluster", help="Manage incremental clustering")
+    cluster_subparsers = p_cluster.add_subparsers(dest="subcommand", help="Cluster commands")
+
+    # cluster status
+    p_cluster_status = cluster_subparsers.add_parser("status", help="Show cluster status")
+    p_cluster_status.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # cluster bootstrap
+    p_cluster_bootstrap = cluster_subparsers.add_parser("bootstrap", help="Bootstrap clustering on existing messages")
+    p_cluster_bootstrap.add_argument("--min-cluster-size", type=int, default=None,
+                                     help="Minimum cluster size (default: from config)")
+    p_cluster_bootstrap.add_argument("--force", action="store_true",
+                                     help="Re-bootstrap even if already initialized")
+    p_cluster_bootstrap.add_argument("--json", action="store_true", help="Output as JSON")
+    p_cluster_bootstrap.add_argument("--quiet", "-q", action="store_true",
+                                     help="Suppress progress output")
+
+    # cluster analyze
+    p_cluster_analyze = cluster_subparsers.add_parser("analyze", help="Analyze stable cluster assignments")
+    p_cluster_analyze.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # cluster show
+    p_cluster_show = cluster_subparsers.add_parser("show", help="Show members of a specific cluster")
+    p_cluster_show.add_argument("cluster_id", help="Cluster ID (e.g., cluster_0)")
+    p_cluster_show.add_argument("--limit", "-n", type=int, default=5,
+                                help="Max members to show (0 = all, default: 5)")
+    p_cluster_show.add_argument("--json", action="store_true", help="Output as JSON")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -396,6 +542,7 @@ def main():
         "log": cmd_log,
         "analyze": cmd_analyze,
         "chat": cmd_chat,
+        "cluster": cmd_cluster,
     }
 
     try:
