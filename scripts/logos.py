@@ -418,7 +418,7 @@ def cmd_cluster(args):
 
             for i, m in enumerate(members, 1):
                 print(f"\n[{i}] vector_id={m['vector_id']} | round={m['round']} | "
-                      f"branch={m['branch']} | mind_id={m['mind_id']} | dist={m['distance']:.4f}")
+                      f"mind_id={m['mind_id']} | dist={m['distance']:.4f}")
                 print("-" * 60)
                 print(m['text'])
 
