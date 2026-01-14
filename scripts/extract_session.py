@@ -2,17 +2,21 @@
 """
 Extract messages from a logos session branch into a new session.
 
+Reads from old format (branches.json, branch field in metadata).
+Writes to new simplified format (session.json, no branch field).
+
 Copies a range of visible messages (including parent branch history) into a
 fresh session, renumbering vector IDs while preserving round numbers and metadata.
 
 Usage:
     python scripts/extract_session.py --to-session ./new-session
     python scripts/extract_session.py --from-vid 10 --to-vid 50 --to-session ./new-session
-    python scripts/extract_session.py --to-session ./new-session --to-branch experiment
 """
 
 import argparse
+import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add project root to path
@@ -20,8 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import numpy as np
 
-from src.core.session import Session, Branch
-from src.core.vector_db import VectorDB
+from src.core.session import Session
 
 # Same session tracking as logos.py
 SESSION_FILE = Path.home() / ".logos_session"
@@ -39,17 +42,17 @@ def extract_session(
     to_session_path: Path,
     from_vid: int | None,
     to_vid: int | None,
-    to_branch: str,
 ) -> tuple[int, int, int]:
     """
     Extract messages from source session branch into a new session.
+
+    Reads old format (with branches), writes new simplified format.
 
     Args:
         source_session: Source session (current branch will be used)
         to_session_path: Path for new session directory
         from_vid: First vector_id to include (None = first visible)
         to_vid: Last vector_id to include (None = last in current branch)
-        to_branch: Branch name in new session
 
     Returns:
         Tuple of (messages_extracted, first_vid, last_vid)
@@ -90,9 +93,12 @@ def extract_session(
     if not extract_ids:
         raise ValueError("No messages in specified range")
 
-    # Check destination doesn't exist
-    if to_session_path.exists() and (to_session_path / "branches.json").exists():
-        raise ValueError(f"Session already exists at {to_session_path}")
+    # Check destination doesn't exist (check both old and new format)
+    if to_session_path.exists():
+        if (to_session_path / "branches.json").exists():
+            raise ValueError(f"Session (old format) already exists at {to_session_path}")
+        if (to_session_path / "session.json").exists():
+            raise ValueError(f"Session already exists at {to_session_path}")
 
     # Get source config
     source_config = source_session.config.copy()
@@ -100,67 +106,59 @@ def extract_session(
     # Determine embedding dim from source
     embedding_dim = source_session.vector_db.embedding_dim
 
-    # Create new session directory
+    # Create new session directory and vector_db subdirectory
     to_session_path.mkdir(parents=True, exist_ok=True)
+    vector_db_path = to_session_path / "vector_db"
+    vector_db_path.mkdir(parents=True, exist_ok=True)
 
-    # Create new VectorDB with extracted messages
-    new_db = VectorDB(
-        active_pool_size=source_config.get('active_pool_size', 50),
-        embedding_dim=embedding_dim,
-    )
+    # Collect embeddings and metadata for new session
+    new_embeddings = []
+    new_metadata = []
 
-    # Copy messages with renumbered vector_ids
     for new_vid, old_vid in enumerate(extract_ids):
         old_meta = source_session.vector_db.get_message(old_vid)
         old_embedding = source_session.vector_db.embeddings[old_vid]
 
-        # Build new metadata preserving all fields except vector_id and branch
-        new_meta = {}
+        # Build new metadata: preserve all fields except vector_id and branch
+        # Field order: round, mind_id, vector_id, timestamp, [extras], text
+        new_meta = {
+            'round': old_meta.get('round', 0),
+            'mind_id': old_meta.get('mind_id', 0),
+            'vector_id': new_vid,
+            'timestamp': old_meta.get('timestamp', datetime.now(timezone.utc).isoformat()),
+        }
+
+        # Copy extra fields (injected, sampled_ids, seed, etc.) but not branch
         for key, value in old_meta.items():
-            if key == 'vector_id':
-                continue  # Will be set by add()
-            elif key == 'branch':
-                continue  # Will be set by add()
-            elif key == 'text':
-                continue  # Passed separately to add()
-            else:
-                new_meta[key] = value
+            if key in ('round', 'mind_id', 'vector_id', 'timestamp', 'branch', 'text'):
+                continue
+            new_meta[key] = value
 
-        new_db.add(
-            text=old_meta['text'],
-            embedding=np.array(old_embedding),
-            round_num=old_meta.get('round', 0),
-            mind_id=old_meta.get('mind_id', 0),
-            branch=to_branch,
-            extra_metadata={k: v for k, v in new_meta.items() if k not in ('round', 'mind_id')},
-        )
+        # Text always last for readability
+        new_meta['text'] = old_meta['text']
 
-    # Save VectorDB
-    vector_db_path = to_session_path / "vector_db"
-    new_db.save(vector_db_path)
+        new_embeddings.append(np.array(old_embedding).astype(np.float32))
+        new_metadata.append(new_meta)
+
+    # Save embeddings as numpy array
+    if new_embeddings:
+        np.save(vector_db_path / 'embeddings.npy', np.array(new_embeddings))
+
+    # Save metadata as JSONL
+    with open(vector_db_path / 'metadata.jsonl', 'w') as f:
+        for meta in new_metadata:
+            f.write(json.dumps(meta) + '\n')
 
     # Determine final iteration (max round in extracted messages)
-    max_round = max(
-        source_session.vector_db.get_message(vid).get('round', 0)
-        for vid in extract_ids
-    )
+    max_round = max(meta['round'] for meta in new_metadata)
 
-    # Create branches.json with single branch
-    import json
-    branches_data = {
-        "current": to_branch,
-        "branches": {
-            to_branch: {
-                "name": to_branch,
-                "parent": None,
-                "parent_iteration": None,
-                "iteration": max_round,
-                "config": source_config,
-            }
-        }
+    # Create session.json (new simplified format - no branches)
+    session_data = {
+        "iteration": max_round,
+        "config": source_config,
     }
-    with open(to_session_path / "branches.json", 'w') as f:
-        json.dump(branches_data, f, indent=2)
+    with open(to_session_path / "session.json", 'w') as f:
+        json.dump(session_data, f, indent=2)
 
     # Create empty intervention log
     (to_session_path / "interventions.jsonl").touch()
@@ -170,7 +168,7 @@ def extract_session(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract messages from a logos session branch into a new session"
+        description="Extract messages from a logos session branch into a new session (new format)"
     )
     parser.add_argument(
         "--from-vid", type=int, default=None,
@@ -184,14 +182,10 @@ def main():
         "--to-session", type=str, required=True,
         help="Path for new session directory"
     )
-    parser.add_argument(
-        "--to-branch", type=str, default="main",
-        help="Branch name in new session (default: main)"
-    )
 
     args = parser.parse_args()
 
-    # Load source session
+    # Load source session (old format with branches)
     try:
         source_dir = get_current_session_dir()
     except RuntimeError as e:
@@ -212,16 +206,14 @@ def main():
             to_session_path=Path(args.to_session),
             from_vid=args.from_vid,
             to_vid=args.to_vid,
-            to_branch=args.to_branch,
         )
     except ValueError as e:
         print(f"Error: {e}")
         return 1
 
     print(f"\nExtracted {count} messages (vid {from_vid} to {to_vid})")
-    print(f"New session: {args.to_session}")
-    print(f"New branch: {args.to_branch}")
-    print(f"\nTo open: logos open {args.to_session}")
+    print(f"New session (simplified format): {args.to_session}")
+    print(f"\nNote: New session uses session.json format (no branches)")
 
     return 0
 
