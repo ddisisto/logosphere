@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-Logos CLI - Pool-based reasoning with branch-based history.
+Logos CLI - Pool-based reasoning sessions.
 
 Usage:
     python scripts/logos.py init ./session "initial prompt"
     python scripts/logos.py run 10
     python scripts/logos.py step
     python scripts/logos.py inject "thought text"
-    python scripts/logos.py branch experiment
-    python scripts/logos.py switch main
     python scripts/logos.py status
-    python scripts/logos.py list
     python scripts/logos.py chat
 """
 
@@ -49,7 +46,7 @@ def cmd_init(args):
     """Initialize a new session."""
     session_dir = Path(args.session_dir)
 
-    if session_dir.exists() and (session_dir / "branches.json").exists():
+    if session_dir.exists() and (session_dir / "session.json").exists():
         print(f"Session already exists at {session_dir}")
         print("Use 'logos open' to open it, or choose a different directory.")
         return 1
@@ -82,9 +79,8 @@ def cmd_init(args):
     set_current_session_dir(session_dir)
 
     print(f"Session initialized: {session_dir}")
-    print(f"Branch: {session.current_branch}")
-    visible = len(session.get_visible_ids())
-    print(f"Pool: {visible} messages")
+    total = session.vector_db.size()
+    print(f"Pool: {total} messages")
     if args.prompts:
         print(f"Seeded with {len(args.prompts)} prompt(s)")
 
@@ -99,8 +95,9 @@ def cmd_open(args):
         print(f"Session not found: {session_dir}")
         return 1
 
-    if not (session_dir / "branches.json").exists():
+    if not (session_dir / "session.json").exists():
         print(f"Not a valid session directory: {session_dir}")
+        print("(Missing session.json)")
         return 1
 
     set_current_session_dir(session_dir)
@@ -109,9 +106,8 @@ def cmd_open(args):
     # Show status
     session = Session(session_dir)
     status = session.get_status()
-    print(f"Branch: {status['current_branch']}")
     print(f"Iteration: {status['iteration']}")
-    print(f"Pool: {status['visible_messages']} visible ({status['total_messages']} total)")
+    print(f"Pool: {status['total_messages']} messages ({status['active_pool_size']} active)")
 
     return 0
 
@@ -137,7 +133,7 @@ def cmd_run(args):
     if args.prompt:
         runner.seed_prompts([args.prompt])
 
-    print(f"Running {args.iterations} iterations on branch '{session.current_branch}'...")
+    print(f"Running {args.iterations} iterations...")
     print("-" * 40)
 
     metrics_history = runner.run(args.iterations)
@@ -159,7 +155,7 @@ def cmd_step(args):
     config = LogosConfig.from_dict(session.config) if session.config else LogosConfig()
     runner = LogosRunner(session, config)
 
-    print(f"Running step on branch '{session.current_branch}'...")
+    print("Running step...")
     metrics = runner.step()
 
     # Save after step
@@ -186,43 +182,6 @@ def cmd_inject(args):
     )
 
     print(f"Injected: {args.text[:60]}...")
-    print(f"Branch: {session.current_branch}")
-
-    return 0
-
-
-def cmd_branch(args):
-    """Create a new branch from current state or historical point."""
-    session_dir = get_current_session_dir()
-    session = Session(session_dir)
-
-    old_branch = session.current_branch
-    from_vector_id = args.vector_id
-
-    new_branch = session.branch(args.name, from_vector_id=from_vector_id)
-
-    if from_vector_id is not None:
-        print(f"Branched '{old_branch}' -> '{new_branch}' from vector_id {from_vector_id}")
-    else:
-        print(f"Branched '{old_branch}' -> '{new_branch}' at iteration {session.iteration}")
-
-    visible = len(session.get_visible_ids())
-    print(f"Now on branch: {new_branch} ({visible} visible messages)")
-
-    return 0
-
-
-def cmd_switch(args):
-    """Switch to a different branch."""
-    session_dir = get_current_session_dir()
-    session = Session(session_dir)
-
-    old_branch = session.current_branch
-    session.switch(args.name)
-
-    print(f"Switched: {old_branch} -> {args.name}")
-    visible = len(session.get_visible_ids())
-    print(f"Visible pool: {visible} messages")
 
     return 0
 
@@ -235,40 +194,15 @@ def cmd_status(args):
     status = session.get_status()
 
     print(f"Session: {status['session_dir']}")
-    print(f"Branch: {status['current_branch']}")
     print(f"Iteration: {status['iteration']}")
-    print(f"Pool: {status['visible_messages']} visible, {status['active_pool_size']} active")
-    print(f"Total messages: {status['total_messages']}")
-    print(f"Branches: {', '.join(status['branches'])}")
+    print(f"Pool: {status['total_messages']} messages ({status['active_pool_size']} active)")
     print(f"Interventions: {status['interventions']}")
 
     return 0
 
 
-def cmd_list(args):
-    """List all branches."""
-    session_dir = get_current_session_dir()
-    session = Session(session_dir)
-
-    branches = session.list_branches()
-
-    if not branches:
-        print("No branches.")
-        return 0
-
-    for b in branches:
-        marker = " *" if b['current'] else ""
-        print(f"  {b['name']}{marker}")
-        if b['parent']:
-            print(f"    parent: {b['parent']} @ iteration {b['parent_iteration']}")
-        print(f"    own messages: {b['own_messages']}")
-        print()
-
-    return 0
-
-
 def cmd_config(args):
-    """Show or set branch config."""
+    """Show or set config."""
     import json as json_mod
     session_dir = get_current_session_dir()
     session = Session(session_dir)
@@ -290,10 +224,10 @@ def cmd_config(args):
                 pass  # Keep as string
             session.config[key] = value
         session._save()
-        print(f"Config updated for branch '{session.current_branch}'")
+        print("Config updated")
     else:
         # Pretty print
-        print(f"Config for branch '{session.current_branch}':")
+        print("Config:")
         if not session.config:
             print("  (empty - will use defaults)")
         else:
@@ -340,7 +274,6 @@ def cmd_chat(args):
         session._save()
 
     print(f"Opening chat for session: {session_dir}")
-    print(f"Branch: {session.current_branch}")
     run_chat(session_dir)
     return 0
 
@@ -377,7 +310,7 @@ def cmd_analyze(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Logos - Pool-based reasoning with branch-based history"
+        description="Logos - Pool-based reasoning sessions"
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -410,24 +343,11 @@ def main():
     p_inject.add_argument("text", help="Thought text")
     p_inject.add_argument("--notes", help="Observer notes")
 
-    # branch
-    p_branch = subparsers.add_parser("branch", help="Create new branch from current state")
-    p_branch.add_argument("name", help="New branch name")
-    p_branch.add_argument("-v", "--vector-id", type=int, dest="vector_id",
-                          help="Branch from specific vector_id instead of current state")
-
-    # switch
-    p_switch = subparsers.add_parser("switch", help="Switch to existing branch")
-    p_switch.add_argument("name", help="Branch name")
-
     # status
     p_status = subparsers.add_parser("status", help="Show session status")
 
-    # list
-    p_list = subparsers.add_parser("list", help="List all branches")
-
     # config
-    p_config = subparsers.add_parser("config", help="Show or set branch config")
+    p_config = subparsers.add_parser("config", help="Show or set config")
     p_config.add_argument("--set", nargs="+", metavar="KEY=VALUE",
                           help="Set config values (e.g., --set model=anthropic/claude-haiku-4.5)")
     p_config.add_argument("--json", action="store_true", help="Output as JSON")
@@ -449,7 +369,7 @@ def main():
     p_analyze.add_argument("--from", type=int, dest="start_iter", default=None,
                            help="Start iteration (default: 0)")
     p_analyze.add_argument("--to", type=int, dest="end_iter", default=None,
-                           help="End iteration (default: branch's current iteration)")
+                           help="End iteration (default: current iteration)")
     p_analyze.add_argument("-M", "--max-messages", type=int, dest="max_messages", default=None,
                            help="Max messages to cluster per iteration (default: active_pool_size)")
     p_analyze.add_argument("--quiet", "-q", action="store_true",
@@ -471,10 +391,7 @@ def main():
         "run": cmd_run,
         "step": cmd_step,
         "inject": cmd_inject,
-        "branch": cmd_branch,
-        "switch": cmd_switch,
         "status": cmd_status,
-        "list": cmd_list,
         "config": cmd_config,
         "log": cmd_log,
         "analyze": cmd_analyze,

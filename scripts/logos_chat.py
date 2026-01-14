@@ -46,8 +46,9 @@ def main():
         print(f"Session not found: {session_dir}")
         return 1
 
-    if not (session_dir / "branches.json").exists():
+    if not (session_dir / "session.json").exists():
         print(f"Not a valid session directory: {session_dir}")
+        print("(Missing session.json)")
         return 1
 
     print(f"Opening chat for session: {session_dir}")

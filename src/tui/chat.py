@@ -230,8 +230,7 @@ class ChatApp(App):
         self._refresh_status()
 
         # Set title
-        self.title = f"Logos Chat"
-        self.sub_title = f"{self.session.current_branch}"
+        self.title = "Logos Chat"
 
         # Initialize pool tracking - restore from session if available (crash recovery)
         saved_marker = self.session.config.get('chat_last_input_pool_size')

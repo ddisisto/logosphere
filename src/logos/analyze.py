@@ -271,7 +271,7 @@ def compute_cluster_timeline(
     verbose: bool = True,
 ) -> ClusterTimeline:
     """
-    Retroactively compute cluster evolution for a session's current branch.
+    Retroactively compute cluster evolution for a session.
 
     Algorithm:
     1. Determine iteration range (start to end)
@@ -288,7 +288,7 @@ def compute_cluster_timeline(
         min_cluster_size: Minimum points to form a cluster
         centroid_match_threshold: Max cosine distance to consider clusters "same"
         start_iteration: First iteration to analyze (default: 0)
-        end_iteration: Last iteration to analyze (default: branch's current iteration)
+        end_iteration: Last iteration to analyze (default: current iteration)
         max_messages: Max messages to cluster per iteration (default: active_pool_size)
         verbose: Print progress
 
@@ -299,9 +299,8 @@ def compute_cluster_timeline(
         raise ImportError("hdbscan not installed. Run: pip install hdbscan")
 
     vector_db = session.vector_db
-    branch_name = session.current_branch
 
-    # Compute actual max round from visible messages
+    # Compute actual max round from messages
     visible_ids = session.get_visible_ids()
     actual_max_round = 0
     for vid in visible_ids:
@@ -312,7 +311,7 @@ def compute_cluster_timeline(
     # Warn about inconsistent iteration counter (iteration should be max_round + 1)
     expected_iteration = actual_max_round + 1
     if session.iteration != expected_iteration and verbose:
-        print(f"Warning: Branch '{branch_name}' iteration counter ({session.iteration}) "
+        print(f"Warning: Session iteration counter ({session.iteration}) "
               f"doesn't match expected ({expected_iteration}). "
               f"Data may need repair.")
 
@@ -332,7 +331,7 @@ def compute_cluster_timeline(
     window_size = max_messages if max_messages is not None else session.active_pool_size
 
     if verbose:
-        print(f"Computing cluster timeline for branch '{branch_name}' iterations {min_iter}-{max_iter} (window={window_size})...")
+        print(f"Computing cluster timeline for iterations {min_iter}-{max_iter} (window={window_size})...")
 
     # Pre-index: build lookup for embeddings and group visible messages by round
     # This changes O(iterations × messages) to O(messages + iterations)

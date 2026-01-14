@@ -52,7 +52,6 @@ class VectorDB:
         embedding: np.ndarray,
         round_num: int,
         mind_id: int,
-        branch: str = "main",
         extra_metadata: Optional[dict] = None
     ) -> int:
         """
@@ -63,7 +62,6 @@ class VectorDB:
             embedding: Vector embedding (1536-dim)
             round_num: Experiment round number
             mind_id: Which Mind produced this message
-            branch: Branch this message belongs to
             extra_metadata: Optional additional metadata
 
         Returns:
@@ -74,7 +72,6 @@ class VectorDB:
         # Build metadata with consistent field order for readability
         # (text last since it's longest and variable-length)
         meta = {
-            'branch': branch,
             'round': round_num,
             'mind_id': mind_id,
             'vector_id': vector_id,

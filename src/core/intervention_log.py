@@ -1,7 +1,7 @@
 """
 Intervention logging for Logosphere sessions.
 
-Tracks all observer actions (inject, branch, rollback, run) with full context.
+Tracks all observer actions (inject, rollback, run) with full context.
 Append-only JSONL for auditability.
 """
 
@@ -17,7 +17,6 @@ from typing import Optional
 
 # Intervention types
 INTERVENTION_INJECT = "message_inject"
-INTERVENTION_BRANCH = "branch"
 INTERVENTION_ROLLBACK = "rollback"
 INTERVENTION_RUN = "run"
 INTERVENTION_SAVE = "save"

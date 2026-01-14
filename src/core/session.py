@@ -1,14 +1,13 @@
 """
 Session management for Logosphere.
 
-Branch-based model: single append-only VectorDB with branch field per message.
-Visibility computed by filtering on branch name + parent lineage.
+Linear session model: single append-only VectorDB, no branching.
+Fork sessions by extracting/cloning with extract_session.py.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -18,7 +17,6 @@ from .intervention_log import (
     InterventionLog,
     Intervention,
     INTERVENTION_INJECT,
-    INTERVENTION_BRANCH,
     INTERVENTION_RUN,
 )
 
@@ -26,47 +24,11 @@ from .intervention_log import (
 EXTERNAL_PROMPT_PREFIX = ">>> "
 
 
-@dataclass
-class Branch:
-    """A branch is a view over the VectorDB."""
-
-    name: str
-    parent: Optional[str]  # Parent branch name
-    parent_iteration: Optional[int]  # Iteration we branched at
-    iteration: int = 0  # Current iteration for this branch
-    parent_vector_id: Optional[int] = None  # If set, filter by vector_id instead of round
-    config: dict = None  # Branch-specific config (inherited from parent on creation)
-
-    def __post_init__(self):
-        if self.config is None:
-            self.config = {}
-
-    def to_dict(self) -> dict:
-        d = {
-            "name": self.name,
-            "parent": self.parent,
-            "parent_iteration": self.parent_iteration,
-            "iteration": self.iteration,
-            "config": self.config,
-        }
-        if self.parent_vector_id is not None:
-            d["parent_vector_id"] = self.parent_vector_id
-        return d
-
-    @classmethod
-    def from_dict(cls, data: dict) -> Branch:
-        # Handle legacy data without iteration field
-        if 'iteration' not in data:
-            data = data.copy()
-            data['iteration'] = 0
-        return cls(**data)
-
-
 class Session:
     """
-    Manages a Logosphere session with branch-based history.
+    Manages a Logosphere session.
 
-    Single append-only VectorDB. Branches are views (filters) over IDs.
+    Single append-only VectorDB. Linear history.
     """
 
     def __init__(
@@ -80,20 +42,19 @@ class Session:
         self.embedding_dim = embedding_dim
 
         # Paths
-        self._state_path = self.session_dir / "state.json"
-        self._branches_path = self.session_dir / "branches.json"
+        self._session_path = self.session_dir / "session.json"
         self._vector_db_path = self.session_dir / "vector_db"
 
         # State
         self.vector_db: Optional[VectorDB] = None
-        self.branches: dict[str, Branch] = {}
-        self.current_branch: str = "main"
+        self.iteration: int = 0
+        self.config: dict = {}
 
         # Intervention log (optional, for audit)
         self.intervention_log = InterventionLog(self.session_dir / "interventions.jsonl")
 
         # Load or init
-        if self._branches_path.exists():
+        if self._session_path.exists():
             self._load()
         else:
             self._init()
@@ -107,35 +68,22 @@ class Session:
             embedding_dim=self.embedding_dim
         )
 
-        # Create main branch (iteration=0 is default in Branch)
-        self.branches = {
-            "main": Branch(
-                name="main",
-                parent=None,
-                parent_iteration=None,
-                iteration=0,
-                config={},
-            )
-        }
-        self.current_branch = "main"
+        self.iteration = 0
+        self.config = {}
 
         self._save()
 
     def _load(self) -> None:
         """Load session from disk."""
-        # Load branches
-        with open(self._branches_path) as f:
+        with open(self._session_path) as f:
             data = json.load(f)
 
-        self.current_branch = data["current"]
-        self.branches = {
-            name: Branch.from_dict(b)
-            for name, b in data["branches"].items()
-        }
+        self.iteration = data.get("iteration", 0)
+        self.config = data.get("config", {})
 
-        # Update active_pool_size from current branch's config
-        if self.current.config.get('active_pool_size'):
-            self.active_pool_size = self.current.config['active_pool_size']
+        # Update active_pool_size from config if set
+        if self.config.get('active_pool_size'):
+            self.active_pool_size = self.config['active_pool_size']
 
         # Load VectorDB
         if self._vector_db_path.exists():
@@ -153,110 +101,36 @@ class Session:
         """Save session to disk."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save branches (iteration now stored per-branch)
         data = {
-            "current": self.current_branch,
-            "branches": {
-                name: b.to_dict()
-                for name, b in self.branches.items()
-            }
+            "iteration": self.iteration,
+            "config": self.config,
         }
-        with open(self._branches_path, 'w') as f:
+        with open(self._session_path, 'w') as f:
             json.dump(data, f, indent=2)
 
         # Save VectorDB
         self.vector_db.save(self._vector_db_path)
 
-    @property
-    def current(self) -> Branch:
-        """Current branch object."""
-        return self.branches[self.current_branch]
-
-    @property
-    def config(self) -> dict:
-        """Current branch's config."""
-        return self.current.config
-
-    @config.setter
-    def config(self, value: dict) -> None:
-        """Set current branch's config."""
-        self.current.config = value
-
-    @property
-    def iteration(self) -> int:
-        """Current branch's iteration."""
-        return self.current.iteration
-
-    @iteration.setter
-    def iteration(self, value: int) -> None:
-        """Set current branch's iteration."""
-        self.current.iteration = value
-
     def get_visible_ids(self) -> set[int]:
-        """Get all vector_ids visible to current branch."""
-        return self._get_branch_visible_ids(self.current_branch, None)
-
-    def _get_branch_visible_ids(
-        self,
-        branch_name: str,
-        up_to_round: Optional[int] = None,
-        up_to_vector_id: Optional[int] = None,
-    ) -> set[int]:
-        """Get IDs visible to a branch, optionally filtered by round or vector_id."""
-        visible = set()
-        branch = self.branches.get(branch_name)
-        if not branch:
-            return visible
-
-        # Scan metadata for messages belonging to this branch
-        for vid in range(self.vector_db.size()):
-            meta = self.vector_db.get_message(vid)
-            if meta and meta.get('branch') == branch_name:
-                # Apply filters - both must pass if present
-                passes_vid = up_to_vector_id is None or vid <= up_to_vector_id
-                passes_round = up_to_round is None or meta.get('round', 0) <= up_to_round
-                if passes_vid and passes_round:
-                    visible.add(vid)
-
-        # Add inherited IDs from parent (up to branch point)
-        if branch.parent:
-            # Use vector_id filter if set, otherwise use round filter
-            if branch.parent_vector_id is not None:
-                # Take minimum of passed constraint and branch's own parent_vector_id
-                # This ensures child branch constraints propagate through the chain
-                effective_vid = branch.parent_vector_id
-                if up_to_vector_id is not None:
-                    effective_vid = min(effective_vid, up_to_vector_id)
-                visible.update(self._get_branch_visible_ids(
-                    branch.parent,
-                    up_to_round=up_to_round,
-                    up_to_vector_id=effective_vid
-                ))
-            elif branch.parent_iteration is not None:
-                effective_round = branch.parent_iteration
-                if up_to_round is not None:
-                    effective_round = min(effective_round, up_to_round)
-                visible.update(self._get_branch_visible_ids(branch.parent, up_to_round=effective_round))
-
-        return visible
+        """Get all vector_ids in the session."""
+        return set(range(self.vector_db.size()))
 
     def sample(self, k: int) -> tuple[list[str], list[int]]:
         """
-        Sample k messages from current branch's visible pool.
+        Sample k messages from active pool.
 
         Returns:
             (texts, vector_ids)
         """
-        visible_ids = list(self.get_visible_ids())
-        if not visible_ids:
+        total = self.vector_db.size()
+        if total == 0:
             return [], []
 
-        # Get active pool (tail of visible IDs)
-        visible_ids.sort()
-        if len(visible_ids) > self.active_pool_size:
-            active_ids = visible_ids[-self.active_pool_size:]
+        # Get active pool (tail of all messages)
+        if total > self.active_pool_size:
+            active_ids = list(range(total - self.active_pool_size, total))
         else:
-            active_ids = visible_ids
+            active_ids = list(range(total))
 
         # Sample
         import random
@@ -273,102 +147,15 @@ class Session:
         mind_id: int = 0,
         extra_metadata: Optional[dict] = None,
     ) -> int:
-        """Add message to VectorDB and current branch."""
+        """Add message to VectorDB."""
         vector_id = self.vector_db.add(
             text=text,
             embedding=embedding,
             round_num=self.iteration,
             mind_id=mind_id,
-            branch=self.current_branch,
             extra_metadata=extra_metadata,
         )
         return vector_id
-
-    def branch(self, name: str, from_vector_id: Optional[int] = None) -> str:
-        """
-        Create new branch from current state or historical point.
-
-        Args:
-            name: New branch name
-            from_vector_id: If set, branch from this vector_id instead of current state
-
-        Returns:
-            Name of created branch
-        """
-        if name in self.branches:
-            raise ValueError(f"Branch '{name}' already exists")
-
-        # Determine branch point
-        if from_vector_id is not None:
-            # Branch from specific vector_id
-            meta = self.vector_db.get_message(from_vector_id)
-            if meta is None:
-                raise ValueError(f"Vector ID {from_vector_id} not found")
-            # Validate that this vector_id is visible to current branch
-            visible_ids = self.get_visible_ids()
-            if from_vector_id not in visible_ids:
-                msg_branch = meta.get('branch', 'unknown')
-                raise ValueError(
-                    f"Vector ID {from_vector_id} (branch '{msg_branch}') "
-                    f"is not visible from current branch '{self.current_branch}'"
-                )
-            parent_iteration = meta.get('round', 0)
-            parent_vector_id = from_vector_id
-        else:
-            # Branch from current state
-            parent_iteration = self.iteration
-            parent_vector_id = None
-
-        # Create new branch (inherit parent's config and iteration)
-        new_branch = Branch(
-            name=name,
-            parent=self.current_branch,
-            parent_iteration=parent_iteration,
-            iteration=parent_iteration,  # Start from parent's iteration at branch point
-            parent_vector_id=parent_vector_id,
-            config=self.config.copy(),  # Copy parent's config
-        )
-        self.branches[name] = new_branch
-
-        # Log intervention
-        content = {
-            "from_branch": self.current_branch,
-            "to_branch": name,
-            "at_iteration": parent_iteration,
-        }
-        if parent_vector_id is not None:
-            content["at_vector_id"] = parent_vector_id
-
-        self.intervention_log.record(
-            intervention_type=INTERVENTION_BRANCH,
-            content=content,
-            snapshot_before=self.current_branch,
-            snapshot_after=name,
-        )
-
-        # Switch to new branch
-        self.current_branch = name
-
-        self._save()
-        return name
-
-    def switch(self, name: str) -> None:
-        """
-        Switch to existing branch.
-
-        Args:
-            name: Branch name to switch to
-        """
-        if name not in self.branches:
-            raise ValueError(f"Branch '{name}' not found")
-
-        self.current_branch = name
-
-        # Update active_pool_size from new branch's config
-        if self.current.config.get('active_pool_size'):
-            self.active_pool_size = self.current.config['active_pool_size']
-
-        self._save()
 
     def inject_message(
         self,
@@ -394,8 +181,8 @@ class Session:
         intervention = self.intervention_log.record(
             intervention_type=INTERVENTION_INJECT,
             content={"text": text, "vector_id": vector_id},
-            snapshot_before=f"{self.current_branch}@{self.iteration}",
-            snapshot_after=f"{self.current_branch}@{self.iteration}",
+            snapshot_before=f"iter_{self.iteration}",
+            snapshot_after=f"iter_{self.iteration}",
             notes=notes,
         )
 
@@ -408,11 +195,10 @@ class Session:
             intervention_type=INTERVENTION_RUN,
             content={
                 "iterations": iterations_run,
-                "branch": self.current_branch,
                 "end_iteration": self.iteration,
             },
-            snapshot_before=f"{self.current_branch}@{self.iteration - iterations_run}",
-            snapshot_after=f"{self.current_branch}@{self.iteration}",
+            snapshot_before=f"iter_{self.iteration - iterations_run}",
+            snapshot_after=f"iter_{self.iteration}",
             notes=notes,
         )
         self._save()
@@ -420,36 +206,11 @@ class Session:
 
     def get_status(self) -> dict:
         """Get current session status."""
-        visible_ids = self.get_visible_ids()
+        total = self.vector_db.size() if self.vector_db else 0
         return {
             "session_dir": str(self.session_dir),
-            "current_branch": self.current_branch,
             "iteration": self.iteration,
-            "total_messages": self.vector_db.size() if self.vector_db else 0,
-            "visible_messages": len(visible_ids),
-            "active_pool_size": min(len(visible_ids), self.active_pool_size),
-            "branches": list(self.branches.keys()),
+            "total_messages": total,
+            "active_pool_size": min(total, self.active_pool_size),
             "interventions": len(self.intervention_log.all()),
         }
-
-    def list_branches(self) -> list[dict]:
-        """List all branches with details."""
-        # Count messages per branch
-        branch_counts = {name: 0 for name in self.branches}
-        for vid in range(self.vector_db.size()):
-            meta = self.vector_db.get_message(vid)
-            if meta:
-                branch_name = meta.get('branch')
-                if branch_name in branch_counts:
-                    branch_counts[branch_name] += 1
-
-        result = []
-        for name, branch in self.branches.items():
-            result.append({
-                "name": name,
-                "current": name == self.current_branch,
-                "parent": branch.parent,
-                "parent_iteration": branch.parent_iteration,
-                "own_messages": branch_counts[name],
-            })
-        return result
