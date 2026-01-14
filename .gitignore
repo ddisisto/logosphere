@@ -31,4 +31,4 @@ Thumbs.db
 .daniel/
 
 # Session data (keep in local dirs, not repo)
-*-session/
+session/
