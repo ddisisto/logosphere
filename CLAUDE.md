@@ -23,16 +23,24 @@ logosphere/
 ├── src/
 │   ├── core/
 │   │   ├── vector_db.py       # Message storage with embeddings
-│   │   ├── session.py         # Branch management, visibility
+│   │   ├── session.py         # Linear session management
 │   │   ├── intervention_log.py # Append-only audit trail
 │   │   ├── embedding_client.py # OpenRouter embedding API
 │   │   └── mind.py            # LLM invocation and parsing
-│   └── logos/
-│       ├── config.py          # Configuration defaults
-│       ├── runner.py          # Core loop: sample → mind → embed → add
-│       └── analyze.py         # Cluster timeline analysis
+│   ├── logos/
+│   │   ├── config.py          # Configuration defaults
+│   │   ├── runner.py          # Core loop: sample → mind → embed → add
+│   │   ├── analyze.py         # Sliding window cluster analysis (legacy)
+│   │   └── clustering/        # Incremental clustering package
+│   │       ├── models.py      # ClusterState, AssignmentTable
+│   │       ├── algorithm.py   # Process iteration, bootstrap
+│   │       └── manager.py     # ClusterManager persistence
+│   ├── analysis/              # Standalone analysis tools
+│   ├── exchange/              # Auditor hooks (experimental)
+│   └── tui/                   # Chat TUI interface
 ├── scripts/
-│   └── logos.py               # Main CLI
+│   ├── logos.py               # Main CLI
+│   └── extract_session.py     # Session extraction/forking utility
 └── docs/                      # Design docs and sketches
 ```
 
@@ -70,31 +78,32 @@ logos step                              # Single iteration
 logos inject "thought text"             # Add external message
 ```
 
-### Branching
-
-```bash
-logos branch experiment                 # Create branch from current state
-logos branch experiment -v 42           # Branch from specific vector_id
-logos switch main                       # Switch branch
-logos list                              # Show all branches
-```
-
 ### Configuration
 
 ```bash
-logos config                            # Show current branch config
+logos config                            # Show current config
 logos config --set model=anthropic/claude-haiku-4.5
 logos config --set k_samples=10
 ```
 
-### Analysis
+### Analysis (Legacy)
 
 ```bash
-logos analyze                           # Cluster timeline (swimlane)
+logos analyze                           # Sliding window swimlane (legacy)
 logos analyze --json                    # JSON output
-logos analyze --min-cluster-size 2      # Tune HDBSCAN
-logos analyze --centroid-threshold 0.3  # Tune cluster matching
+logos analyze --from-iteration 10       # Analyze specific range
 ```
+
+### Incremental Clustering
+
+```bash
+logos cluster status                    # Show cluster registry state
+logos cluster bootstrap                 # Bootstrap from existing messages
+logos cluster analyze                   # Analyze stable assignments
+logos cluster show cluster_0            # Show members of a cluster
+```
+
+Clustering is integrated into `logos run` - new messages are assigned to clusters incrementally.
 
 ### Intervention Log
 
@@ -109,23 +118,18 @@ logos log                               # Show intervention history
 ### Session
 
 A session is a directory containing:
-- `branches.json` - Branch metadata and per-branch iteration counters
+- `session.json` - Iteration counter and config
 - `vector_db/` - Embeddings and message metadata
+- `clustering/` - Cluster registry and assignments (optional)
 - `interventions.jsonl` - Audit log of all actions
 
-### Branches
-
-Branches provide non-destructive exploration:
-- Each branch has its own iteration counter (no gaps)
-- New branches inherit parent's iteration at branch point
-- Visibility is computed by filtering, not copying data
-- Switch freely between branches
+Sessions are linear (no branching). Fork sessions by copying with `extract_session.py`.
 
 ### VectorDB
 
 Append-only message storage:
-- Each message has: text, embedding, round, branch, mind_id
-- Active pool = tail N messages visible to current branch
+- Each message has: text, embedding, round, mind_id
+- Active pool = tail N messages
 - Sampling is uniform random from active pool
 
 ### Mind
@@ -135,12 +139,21 @@ Stateless LLM invocation:
 - Output: thinking (private) + transmitted messages (public)
 - Parsing: `---` separates thoughts; first block is private
 
-### Analysis
+### Analysis (Legacy)
 
-Cluster timeline shows semantic evolution:
-- HDBSCAN clustering at each iteration
-- Centroid matching tracks cluster identity across time
+Sliding window cluster timeline:
+- HDBSCAN clustering per iteration window
 - ASCII swimlane visualization or JSON export
+- Note: Same message may appear in different clusters as window slides
+
+### Incremental Clustering
+
+Stable, persistent cluster assignments (see `docs/incremental-clustering-design.md`):
+- Each message assigned to exactly one cluster (or noise/fossil)
+- Two-phase algorithm: centroid matching → HDBSCAN for new clusters
+- Centroids evolve incrementally as new members join
+- Noise reconsidered for N iterations before fossilizing
+- Clusters persist across iterations with stable identity
 
 ---
 
@@ -151,7 +164,9 @@ Cluster timeline shows semantic evolution:
 | `k_samples` | 5 | Messages sampled per iteration |
 | `active_pool_size` | 50 | Size of recency window |
 | `model` | claude-haiku-4.5 | LLM for mind invocations |
-| `min_cluster_size` | 3 | HDBSCAN clustering threshold |
+| `min_cluster_size` | 3 | HDBSCAN threshold for new clusters |
+| `centroid_match_threshold` | 0.3 | Max cosine distance for cluster matching |
+| `noise_reconsider_iterations` | 20 | How long noise stays in candidate pool |
 
 ---
 
@@ -164,7 +179,7 @@ Messages contain only content. Minds cannot see metadata.
 Minds are stateless. The pool is the collective memory.
 
 ### 3. Non-destructive Exploration
-Branches let you explore "what if" without losing state.
+Fork sessions to explore "what if" without losing state.
 
 ### 4. Observable Dynamics
 Every action logged. Cluster evolution trackable.
@@ -173,26 +188,15 @@ Every action logged. Cluster evolution trackable.
 
 ## Session Format
 
-### branches.json
+### session.json
 
 ```json
 {
-  "current": "main",
-  "branches": {
-    "main": {
-      "name": "main",
-      "parent": null,
-      "parent_iteration": null,
-      "iteration": 42,
-      "config": { ... }
-    },
-    "experiment": {
-      "name": "experiment",
-      "parent": "main",
-      "parent_iteration": 20,
-      "iteration": 35,
-      "config": { ... }
-    }
+  "iteration": 42,
+  "config": {
+    "model": "anthropic/claude-haiku-4.5",
+    "k_samples": 5,
+    "active_pool_size": 50
   }
 }
 ```
@@ -201,18 +205,22 @@ Every action logged. Cluster evolution trackable.
 
 ```json
 {"type": "inject", "content": {"text": "...", "vector_id": 5}, ...}
-{"type": "branch", "content": {"from_branch": "main", "to_branch": "exp"}, ...}
-{"type": "run", "content": {"iterations": 10, "branch": "main"}, ...}
+{"type": "run", "content": {"iterations": 10}, ...}
 ```
 
 ---
 
 ## Future Directions
 
+**Clustering:**
+- Cluster splitting when coherence drops
+- Cluster shape metrics (aspect ratio, dimensionality)
+- Cross-session cluster comparison
+
 **Analysis:**
 - Diversity metrics over time
-- Cross-branch comparison
 - Injection impact analysis
+- Cluster trajectory visualization
 
 **Experiments:**
 - Different models on same session
