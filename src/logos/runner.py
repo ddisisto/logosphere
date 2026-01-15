@@ -39,7 +39,7 @@ from src.core.mind import invoke_mind
 from src.analysis.attractors import AttractorDetector
 
 from .config import LogosConfig, EXTERNAL_PROMPT_PREFIX
-from .clustering import ClusterManager
+from .clustering import ClusterManager, ASSIGNMENT_NOISE, ASSIGNMENT_FOSSIL
 
 # Project-level hooks directory
 HOOKS_DIR = Path(__file__).parent.parent.parent / "hooks"
@@ -270,6 +270,24 @@ class LogosRunner:
 
         # Sample from current branch's visible pool
         thoughts, sampled_ids = self.session.sample(self.config.k_samples)
+
+        # Annotate with cluster IDs if enabled
+        if self.config.show_cluster_ids and self.cluster_mgr.initialized:
+            annotated = []
+            for text, vid in zip(thoughts, sampled_ids):
+                entry = self.cluster_mgr.assignments.get(vid)
+                if entry:
+                    cid = entry.cluster_id
+                    if cid == ASSIGNMENT_NOISE:
+                        tag = "~"
+                    elif cid == ASSIGNMENT_FOSSIL:
+                        tag = "·"
+                    else:
+                        # Extract numeric part from "cluster_N"
+                        tag = cid.replace("cluster_", "")
+                    text = f"{text}\n[{tag}]"
+                annotated.append(text)
+            thoughts = annotated
 
         if self.config.verbose:
             print(f"\n[Iteration {self.session.iteration}] Sampled {len(thoughts)} thoughts")

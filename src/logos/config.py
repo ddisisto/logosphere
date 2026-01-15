@@ -82,6 +82,7 @@ class LogosConfig:
 
     # Clustering
     min_cluster_size: int = 3
+    show_cluster_ids: bool = False  # Annotate sampled messages with [N], [~], [·]
 
     # LLM
     model: str = "anthropic/claude-haiku-4.5"
