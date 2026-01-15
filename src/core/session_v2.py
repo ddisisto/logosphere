@@ -34,6 +34,8 @@ class SessionConfig:
 
     def __init__(
         self,
+        # Sampling
+        k_samples: int = 5,  # Thoughts to sample per iteration
         # Pool parameters
         active_pool_size: int = 50,
         message_buffer_per_source: int = 10,
@@ -48,6 +50,7 @@ class SessionConfig:
         centroid_match_threshold: float = 0.3,
         noise_reconsider_iterations: int = 20,
     ):
+        self.k_samples = k_samples
         self.active_pool_size = active_pool_size
         self.message_buffer_per_source = message_buffer_per_source
         self.model = model
@@ -61,6 +64,7 @@ class SessionConfig:
     def to_dict(self) -> dict:
         """Convert to YAML-serializable dict."""
         return {
+            'k_samples': self.k_samples,
             'active_pool_size': self.active_pool_size,
             'message_buffer_per_source': self.message_buffer_per_source,
             'model': self.model,
@@ -207,7 +211,14 @@ class SessionV2:
         to: str,
         text: str,
     ) -> None:
-        """Add a message to the message pool."""
+        """Add a message to the message pool.
+
+        User messages increment the iteration counter (user's "thinking time").
+        """
+        # User messages count as an iteration (user's internal thinking)
+        if source == 'user':
+            self.iteration += 1
+
         self.message_pool.add(
             source=source,
             to=to,
@@ -265,7 +276,7 @@ class SessionV2:
                 to='mind_0',
                 text=initial_prompt,
             )
-            session.message_pool.save()
+            session.save()  # Save both iteration and message pool
 
         return session
 

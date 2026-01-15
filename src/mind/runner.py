@@ -74,7 +74,7 @@ class MindRunner:
             StepResult with counts and status
         """
         # 1. Sample thoughts from thinking pool
-        thoughts, sampled_ids = self.session.sample_thoughts(self.config.k_samples)
+        thoughts, sampled_ids = self.session.sample_thoughts(self.session.config.k_samples)
 
         # 2. Get cluster assignments for sampled thoughts
         cluster_assignments = {}
@@ -107,8 +107,8 @@ class MindRunner:
         output: MindOutput = invoke_mind(
             system_prompt=self.system_prompt,
             user_input=user_input,
-            model=self.config.model,
-            token_limit=self.config.token_limit,
+            model=self.session.config.model,
+            token_limit=self.session.config.token_limit,
         )
 
         if output.skipped:
