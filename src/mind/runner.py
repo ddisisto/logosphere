@@ -199,7 +199,7 @@ class MindRunner:
 
     def run(self, iterations: int) -> list[StepResult]:
         """
-        Run multiple iterations.
+        Run exactly N iterations.
 
         Args:
             iterations: Number of iterations to run
@@ -225,6 +225,41 @@ class MindRunner:
             print(f"Completed {iterations} iterations: "
                   f"{total_thoughts} thoughts, {total_messages} messages, "
                   f"{skipped} skipped")
+
+        return results
+
+    def run_until_message(self, max_iterations: int = 100) -> list[StepResult]:
+        """
+        Run until a message is emitted to the message pool.
+
+        This is the natural conversation breakpoint: the mind has something
+        to say "out loud" that should be read before continuing.
+
+        Args:
+            max_iterations: Safety limit to prevent infinite loops
+
+        Returns:
+            List of StepResults (last one will have messages_added > 0)
+        """
+        results = []
+
+        if self.config.verbose:
+            print("Running until message...")
+            print("-" * 40)
+
+        for i in range(max_iterations):
+            result = self.step()
+            results.append(result)
+
+            if result.messages_added > 0:
+                if self.config.verbose:
+                    print("-" * 40)
+                    print(f"Message emitted after {len(results)} iterations")
+                break
+        else:
+            if self.config.verbose:
+                print("-" * 40)
+                print(f"Max iterations ({max_iterations}) reached without message")
 
         return results
 

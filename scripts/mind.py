@@ -121,7 +121,12 @@ def cmd_run(args) -> int:
     runner = MindRunner(session, config)
 
     try:
-        results = runner.run(args.iterations)
+        if args.iterations is not None:
+            # Fixed number of iterations
+            results = runner.run(args.iterations)
+        else:
+            # Default: run until message emitted
+            results = runner.run_until_message(max_iterations=args.max)
         return 0
     except Exception as e:
         print(f"Error: {e}")
@@ -271,8 +276,11 @@ def main():
     subparsers.add_parser('status', help='Show session status')
 
     # run
-    p_run = subparsers.add_parser('run', help='Run iterations')
-    p_run.add_argument('iterations', type=int, help='Number of iterations')
+    p_run = subparsers.add_parser('run', help='Run until message (or N iterations)')
+    p_run.add_argument('iterations', type=int, nargs='?', default=None,
+                       help='Number of iterations (default: run until message)')
+    p_run.add_argument('--max', type=int, default=100,
+                       help='Max iterations when running until message (default: 100)')
     p_run.add_argument('-q', '--quiet', action='store_true', help='Quiet mode')
 
     # step
