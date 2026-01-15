@@ -150,10 +150,15 @@ class ClusterManager:
         verbose: bool = True,
     ) -> dict:
         """Process one iteration of incremental clustering."""
+        # Auto-initialize if not yet initialized
         if not self.initialized:
-            raise RuntimeError("Clustering not initialized. Run bootstrap first.")
-
-        if self.registry is None:
+            self.registry = ClusterRegistry()
+            self.assignments = AssignmentTable()
+            # Save to mark as initialized
+            self._save()
+            if verbose:
+                print("  [clustering] Auto-initialized (empty registry)")
+        elif self.registry is None:
             self._load()
 
         stats = process_iteration(

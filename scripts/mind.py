@@ -168,14 +168,10 @@ def cmd_cluster(args) -> int:
     config = MindConfig(verbose=True)
     runner = MindRunner(session, config)
 
-    if args.cluster_command == 'bootstrap':
-        runner.bootstrap_clustering()
-        return 0
-
-    elif args.cluster_command == 'status':
+    if args.cluster_command == 'status':
         status = runner.cluster_mgr.get_status()
         if not runner.cluster_mgr.initialized:
-            print("Clustering not initialized. Run 'mind cluster bootstrap' first.")
+            print("Clustering not yet initialized (will auto-initialize on first run).")
             return 0
 
         print(f"Clusters: {status.get('num_clusters', 0)}")
@@ -289,7 +285,7 @@ def main():
 
     # cluster
     p_cluster = subparsers.add_parser('cluster', help='Cluster management')
-    p_cluster.add_argument('cluster_command', choices=['bootstrap', 'status', 'show'],
+    p_cluster.add_argument('cluster_command', choices=['status', 'show'],
                            help='Cluster subcommand')
     p_cluster.add_argument('cluster_id', nargs='?', help='Cluster ID (for show)')
 

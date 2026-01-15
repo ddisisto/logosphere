@@ -60,14 +60,11 @@ class MindRunner:
             api_key=None,  # Will use env var
         )
 
-        # Clustering manager
+        # Clustering manager (auto-initializes on first use)
         self.cluster_mgr = ClusterManager(session.session_dir)
 
         # Load system prompt
         self.system_prompt = load_system_prompt()
-
-        if self.config.verbose and self.cluster_mgr.initialized:
-            print("[clustering] Incremental clustering enabled")
 
     def step(self) -> StepResult:
         """
@@ -81,7 +78,7 @@ class MindRunner:
 
         # 2. Get cluster assignments for sampled thoughts
         cluster_assignments = {}
-        if self.cluster_mgr.initialized and self.cluster_mgr.assignments:
+        if self.cluster_mgr.assignments:
             for vid in sampled_ids:
                 entry = self.cluster_mgr.assignments.get(vid)
                 if entry:
@@ -164,8 +161,8 @@ class MindRunner:
                 preview = text[:60] + "..." if len(text) > 60 else text
                 print(f"  [message → {to}] {preview}")
 
-        # 8. Run incremental clustering on new thoughts
-        if self.cluster_mgr.initialized and new_thought_ids:
+        # 8. Run incremental clustering on new thoughts (auto-initializes if needed)
+        if new_thought_ids:
             try:
                 stats = self.cluster_mgr.process(
                     session=self._make_clustering_adapter(),
@@ -230,30 +227,6 @@ class MindRunner:
                   f"{skipped} skipped")
 
         return results
-
-    def bootstrap_clustering(self) -> None:
-        """Bootstrap clustering from existing thoughts."""
-        if self.session.thinking_pool.size() == 0:
-            print("No thoughts to cluster")
-            return
-
-        self.cluster_mgr.bootstrap(
-            session=self._make_clustering_adapter(),
-            min_cluster_size=self.session.config.min_cluster_size,
-        )
-
-        # Update cluster assignments in thinking pool
-        if self.cluster_mgr.assignments:
-            for vid in range(self.session.thinking_pool.size()):
-                entry = self.cluster_mgr.assignments.get(vid)
-                if entry:
-                    self.session.thinking_pool.update_cluster(vid, entry.cluster_id)
-
-        self.session.thinking_pool.save()
-
-        if self.config.verbose:
-            status = self.cluster_mgr.get_status()
-            print(f"Bootstrapped clustering: {status.get('num_clusters', 0)} clusters")
 
     def _make_clustering_adapter(self):
         """
