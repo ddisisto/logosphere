@@ -1,8 +1,9 @@
 """
 Mind v2 - YAML-based Mind invocation for Logosphere v2.
 
-Implements the LOGOSPHERE MIND PROTOCOL v0.3:
+Implements the LOGOSPHERE MIND PROTOCOL v1.1:
 - YAML input format (meta + thinking_pool + message_pool)
+- Custom comment-based metadata for thoughts
 - YAML output parsing (thoughts + messages)
 """
 
@@ -24,8 +25,8 @@ from .message_pool import Message
 # ============================================================================
 
 def load_system_prompt() -> str:
-    """Load system prompt from docs/system_prompt_v1.0.md."""
-    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.0.md'
+    """Load system prompt from docs/system_prompt_v1.1.md."""
+    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.1.md'
     if prompt_path.exists():
         return prompt_path.read_text()
     raise FileNotFoundError(f"System prompt not found at {prompt_path}")
@@ -35,60 +36,75 @@ def load_system_prompt() -> str:
 # Input Formatting
 # ============================================================================
 
-def format_cluster_tag(cluster_id: Optional[str]) -> str | int:
+def format_cluster_comment(cluster_id: Optional[str], cluster_size: Optional[int]) -> str:
     """
-    Format cluster assignment for display to Mind.
+    Format cluster info for YAML comment.
 
     Returns:
-        - int: Cluster number (e.g., 3)
-        - str: '~' for noise/unassigned
+        - '{id: N, size: M}' for clustered thoughts
+        - '{~}' for noise/unassigned
     """
     if cluster_id is None or cluster_id == 'noise':
-        return '~'
+        return '{~}'
 
     if cluster_id.startswith('cluster_'):
-        # Extract numeric part
-        return int(cluster_id.replace('cluster_', ''))
+        cid = int(cluster_id.replace('cluster_', ''))
+        size = cluster_size if cluster_size is not None else 1
+        return f'{{id: {cid}, size: {size}}}'
 
-    # Unknown format, return as-is
-    return cluster_id
+    # Unknown format
+    return '{~}'
 
 
-def format_thought_for_input(
+def format_thought_yaml(
     thought: Thought,
     cluster_info: Optional[dict],
     current_iter: int,
-) -> dict:
+) -> str:
     """
-    Format a thought for Mind input.
+    Format a single thought as YAML with comment metadata.
 
-    Args:
-        thought: The thought to format
-        cluster_info: Optional clustering info {cluster_id}
-        current_iter: Current iteration for age calculation
-
-    Returns:
-        Dict suitable for YAML serialization
+    Format:
+      - |  # age: N, cluster: {id: M, size: K}
+        thought text here
+        possibly multiple lines
     """
-    cluster_tag = format_cluster_tag(
-        cluster_id=cluster_info.get('cluster_id') if cluster_info else thought.cluster,
-    )
+    age = current_iter - thought.iter
+    cluster_id = cluster_info.get('cluster_id') if cluster_info else thought.cluster
+    cluster_size = cluster_info.get('size') if cluster_info else None
+    cluster_comment = format_cluster_comment(cluster_id, cluster_size)
 
-    return {
-        'text': thought.text,
-        'age': current_iter - thought.iter,  # Relative age, not absolute iter
-        'cluster': cluster_tag,
-    }
+    # Indent text for YAML block
+    lines = thought.text.split('\n')
+    indented_text = '\n'.join('    ' + line for line in lines)
+
+    return f'  - |  # age: {age}, cluster: {cluster_comment}\n{indented_text}'
 
 
-def format_message_for_input(message: Message, current_iter: int) -> dict:
-    """Format a message for Mind input."""
-    return {
-        'source': message.source,
-        'to': message.to,
-        'age': current_iter - message.iter,  # Relative age
-        'text': message.text,
-    }
+def format_message_yaml(message: Message, current_iter: int) -> str:
+    """
+    Format a single message as YAML.
+
+    Format:
+      - source: user
+        to: mind_0
+        age: 162
+        time: 2026-01-15T12:31:19+11:00
+        text: |
+          message text here
+    """
+    age = current_iter - message.iter
+
+    # Indent text for YAML block
+    lines = message.text.split('\n')
+    indented_text = '\n'.join('      ' + line for line in lines)
+
+    return f'''  - source: {message.source}
+    to: {message.to}
+    age: {age}
+    time: {message.time}
+    text: |
+{indented_text}'''
 
 
 def format_input(
@@ -96,49 +112,52 @@ def format_input(
     current_iter: int,
     thoughts: list[Thought],
     messages: list[Message],
-    cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id}
+    cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id, size}
     user_time: Optional[str] = None,
 ) -> str:
     """
-    Format input for Mind invocation.
+    Format input for Mind invocation (v1.1 protocol).
 
     Args:
         mind_id: Identity of this mind (e.g., "mind_0")
         current_iter: Current iteration number
         thoughts: Sampled thoughts from thinking pool
         messages: Active messages from message pool
-        cluster_assignments: Optional cluster info per thought
+        cluster_assignments: Optional cluster info per thought {cluster_id, size}
         user_time: Optional timestamp override
 
     Returns:
-        YAML string for Mind input
+        YAML string for Mind input with comment-based thought metadata
     """
     if user_time is None:
         user_time = datetime.now(timezone.utc).isoformat()
 
-    # Format thinking pool
-    thinking_pool = []
+    # Build meta section
+    meta_yaml = f'''meta:
+  self: {mind_id}
+  # The clock of iterations marches ever forward. What persists and what changes?
+  iter: {current_iter}
+  user_time: {user_time}'''
+
+    # Build thinking pool with custom comment format
+    thought_items = []
     for thought in thoughts:
         cluster_info = None
         if cluster_assignments and thought.vector_id is not None:
             cluster_info = cluster_assignments.get(thought.vector_id)
-        thinking_pool.append(format_thought_for_input(thought, cluster_info, current_iter))
+        thought_items.append(format_thought_yaml(thought, cluster_info, current_iter))
 
-    # Format message pool
-    message_pool = [format_message_for_input(m, current_iter) for m in messages]
+    thinking_yaml = 'thinking_pool:\n  # A *random, unordered sample* from the pool. What should be remembered? What should be forgotten?'
+    if thought_items:
+        thinking_yaml += '\n' + '\n'.join(thought_items)
 
-    # Build input structure
-    input_data = {
-        'meta': {
-            'self': mind_id,
-            'iter': current_iter,
-            'user_time': user_time,
-        },
-        'thinking_pool': thinking_pool,
-        'message_pool': message_pool,
-    }
+    # Build message pool
+    message_items = [format_message_yaml(m, current_iter) for m in messages]
+    messages_yaml = 'message_pool:\n  # Direct dialogue across the boundary. What deserves a response?'
+    if message_items:
+        messages_yaml += '\n' + '\n'.join(message_items)
 
-    return yaml.dump(input_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    return f'{meta_yaml}\n\n{thinking_yaml}\n\n{messages_yaml}\n'
 
 
 # ============================================================================

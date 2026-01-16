@@ -76,13 +76,23 @@ class MindRunner:
         # 1. Sample thoughts from thinking pool
         thoughts, sampled_ids = self.session.sample_thoughts(self.session.config.k_samples)
 
-        # 2. Get cluster assignments for sampled thoughts
+        # 2. Get cluster assignments and sizes for sampled thoughts
         cluster_assignments = {}
         if self.cluster_mgr.assignments:
+            # Compute active cluster sizes (members currently in visible pool)
+            visible_ids = self.session.thinking_pool.get_visible_ids()
+            cluster_sizes = {}
+            for vid in visible_ids:
+                entry = self.cluster_mgr.assignments.get(vid)
+                if entry and entry.cluster_id.startswith('cluster_'):
+                    cluster_sizes[entry.cluster_id] = cluster_sizes.get(entry.cluster_id, 0) + 1
+
+            # Build assignments with sizes
             for vid in sampled_ids:
                 entry = self.cluster_mgr.assignments.get(vid)
                 if entry:
-                    cluster_assignments[vid] = {'cluster_id': entry.cluster_id}
+                    size = cluster_sizes.get(entry.cluster_id) if entry.cluster_id.startswith('cluster_') else None
+                    cluster_assignments[vid] = {'cluster_id': entry.cluster_id, 'size': size}
 
         # 3. Get messages from message pool
         messages = self.session.get_messages()

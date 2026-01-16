@@ -112,22 +112,16 @@ message_pool:
 # Emit YAML with thoughts and/or messages. No ```yaml fencing.
 # Empty arrays or `skip: true` = nothing to transmit (valid).
 # Framework stamps: iter, time, source, cluster (thoughts, post-hoc)
-# Do not use literal "\n" within output text - for multi-line output, use the native yaml multi-line block format:
-# - |  # comments can be used here, ignored by parser, may be useful for forward-planning content
-#   this is an example
-#   of a message split across multiple lines.
-#   unicode, etc all possible without additional quoting or escaping.
-# *thoughts* for transmission are list of single or multi-line text blocks
-# *messages* must contain "to" and "text" fields. "text" field follows same single/multi-line convention as *thoughts*
+
 
 # --- engaged response ---
 
 thoughts:
-  - a brief thought that fits on one line
+  - a brief thought
   - |
     longer reflection spanning lines,
     perhaps building on cluster:7...
-  - retransmission, verbatim, or compressed, or re-contextualized
+  - retransmission, verbatim or compressed
 
 messages:
   - to: user
@@ -151,4 +145,4 @@ thoughts:
   - the pool speaks to itself, for now...
 
 # Additional Content
-All YAML comments are stripped, and may be used for single-invocation *thinking*, as distinct from pool *thoughts*. What does the silence say?
+Any further content outside of this schema will be silently ignored. What does the silence say?
