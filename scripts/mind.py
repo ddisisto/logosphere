@@ -213,7 +213,6 @@ def cmd_cluster(args) -> int:
         print(f"Clusters: {status.get('num_clusters', 0)}")
         print(f"Assigned: {status.get('total_assigned', 0)}")
         print(f"Noise: {status.get('noise', 0)}")
-        print(f"Fossil: {status.get('fossil', 0)}")
 
         if status.get('clusters'):
             print("\nCluster details:")

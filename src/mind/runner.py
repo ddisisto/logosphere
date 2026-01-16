@@ -82,10 +82,7 @@ class MindRunner:
             for vid in sampled_ids:
                 entry = self.cluster_mgr.assignments.get(vid)
                 if entry:
-                    cluster_assignments[vid] = {
-                        'cluster_id': entry.cluster_id,
-                        'noise_since': entry.noise_since,
-                    }
+                    cluster_assignments[vid] = {'cluster_id': entry.cluster_id}
 
         # 3. Get messages from message pool
         messages = self.session.get_messages()
@@ -169,7 +166,6 @@ class MindRunner:
                     iteration=self.session.iteration,
                     min_cluster_size=self.session.config.min_cluster_size,
                     centroid_threshold=self.session.config.centroid_match_threshold,
-                    noise_window=self.session.config.noise_reconsider_iterations,
                 )
                 if self.config.verbose:
                     print(f"  [clustering] assigned={stats.get('assigned', 0)}, "

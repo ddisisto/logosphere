@@ -35,36 +35,20 @@ def load_system_prompt() -> str:
 # Input Formatting
 # ============================================================================
 
-def format_cluster_tag(
-    cluster_id: Optional[str],
-    noise_since: Optional[int],
-    current_iter: int,
-) -> str | int:
+def format_cluster_tag(cluster_id: Optional[str]) -> str | int:
     """
     Format cluster assignment for display to Mind.
 
     Returns:
         - int: Cluster number (e.g., 3)
-        - str: Noise indicator (~, ~~, ~~~, etc.)
-        - str: Fossil indicator (·)
+        - str: '~' for noise/unassigned
     """
-    if cluster_id is None:
-        return '~'  # Unassigned, treated as fresh noise
+    if cluster_id is None or cluster_id == 'noise':
+        return '~'
 
     if cluster_id.startswith('cluster_'):
         # Extract numeric part
         return int(cluster_id.replace('cluster_', ''))
-
-    if cluster_id == 'noise':
-        # Tilde count based on age
-        if noise_since is not None:
-            age = current_iter - noise_since
-            tilde_count = min(age + 1, 10)  # Cap at 10 tildes
-            return '~' * tilde_count
-        return '~'
-
-    if cluster_id == 'fossil':
-        return '·'
 
     # Unknown format, return as-is
     return cluster_id
@@ -80,33 +64,29 @@ def format_thought_for_input(
 
     Args:
         thought: The thought to format
-        cluster_info: Optional clustering info {cluster_id, noise_since}
-        current_iter: Current iteration for noise age calculation
+        cluster_info: Optional clustering info {cluster_id}
+        current_iter: Current iteration for age calculation
 
     Returns:
         Dict suitable for YAML serialization
     """
     cluster_tag = format_cluster_tag(
         cluster_id=cluster_info.get('cluster_id') if cluster_info else thought.cluster,
-        noise_since=cluster_info.get('noise_since') if cluster_info else None,
-        current_iter=current_iter,
     )
 
     return {
         'text': thought.text,
-        'iter': thought.iter,
-        'time': thought.time,
+        'age': current_iter - thought.iter,  # Relative age, not absolute iter
         'cluster': cluster_tag,
     }
 
 
-def format_message_for_input(message: Message) -> dict:
+def format_message_for_input(message: Message, current_iter: int) -> dict:
     """Format a message for Mind input."""
     return {
         'source': message.source,
         'to': message.to,
-        'iter': message.iter,
-        'time': message.time,
+        'age': current_iter - message.iter,  # Relative age
         'text': message.text,
     }
 
@@ -116,7 +96,7 @@ def format_input(
     current_iter: int,
     thoughts: list[Thought],
     messages: list[Message],
-    cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id, noise_since}
+    cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id}
     user_time: Optional[str] = None,
 ) -> str:
     """
@@ -145,7 +125,7 @@ def format_input(
         thinking_pool.append(format_thought_for_input(thought, cluster_info, current_iter))
 
     # Format message pool
-    message_pool = [format_message_for_input(m) for m in messages]
+    message_pool = [format_message_for_input(m, current_iter) for m in messages]
 
     # Build input structure
     input_data = {

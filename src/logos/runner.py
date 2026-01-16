@@ -39,7 +39,7 @@ from src.core.mind import invoke_mind
 from src.analysis.attractors import AttractorDetector
 
 from .config import LogosConfig, EXTERNAL_PROMPT_PREFIX
-from .clustering import ClusterManager, ASSIGNMENT_NOISE, ASSIGNMENT_FOSSIL
+from .clustering import ClusterManager, ASSIGNMENT_NOISE
 
 # Project-level hooks directory
 HOOKS_DIR = Path(__file__).parent.parent.parent / "hooks"
@@ -280,8 +280,6 @@ class LogosRunner:
                     cid = entry.cluster_id
                     if cid == ASSIGNMENT_NOISE:
                         tag = "~"
-                    elif cid == ASSIGNMENT_FOSSIL:
-                        tag = "·"
                     else:
                         # Extract numeric part from "cluster_N"
                         tag = cid.replace("cluster_", "")

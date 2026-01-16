@@ -48,7 +48,6 @@ class SessionConfig:
         # Clustering
         min_cluster_size: int = 3,
         centroid_match_threshold: float = 0.3,
-        noise_reconsider_iterations: int = 20,
     ):
         self.k_samples = k_samples
         self.active_pool_size = active_pool_size
@@ -59,7 +58,6 @@ class SessionConfig:
         self.embedding_dim = embedding_dim
         self.min_cluster_size = min_cluster_size
         self.centroid_match_threshold = centroid_match_threshold
-        self.noise_reconsider_iterations = noise_reconsider_iterations
 
     def to_dict(self) -> dict:
         """Convert to YAML-serializable dict."""
@@ -73,7 +71,6 @@ class SessionConfig:
             'embedding_dim': self.embedding_dim,
             'min_cluster_size': self.min_cluster_size,
             'centroid_match_threshold': self.centroid_match_threshold,
-            'noise_reconsider_iterations': self.noise_reconsider_iterations,
         }
 
     @classmethod

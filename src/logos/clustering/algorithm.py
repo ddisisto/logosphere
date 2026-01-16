@@ -65,14 +65,13 @@ def process_iteration(
     iteration: int,
     centroid_threshold: float = 0.3,
     min_cluster_size: int = 3,
-    noise_window: int = 20,
     verbose: bool = True,
 ) -> dict:
     """
     Process one iteration of incremental clustering.
 
     Two-phase algorithm:
-    1. Match new messages + recent noise against existing cluster centroids
+    1. Match new messages + visible noise against existing cluster centroids
     2. Run HDBSCAN on remaining unmatched to discover new clusters
 
     Args:
@@ -82,11 +81,10 @@ def process_iteration(
         iteration: Current iteration number
         centroid_threshold: Max cosine distance for phase 1 matching
         min_cluster_size: HDBSCAN threshold for new cluster formation
-        noise_window: How long noise stays in candidate pool (iterations)
         verbose: Print progress
 
     Returns:
-        Dict with stats: {assigned, new_clusters, noise, fossilized}
+        Dict with stats: {assigned, new_clusters, noise}
     """
     if not HDBSCAN_AVAILABLE:
         raise ImportError("hdbscan not installed. Run: uv sync --extra analysis")
@@ -94,15 +92,16 @@ def process_iteration(
     vector_db = session.vector_db
     visible_ids = session.get_visible_ids()
 
-    # 1. Gather candidates: unassigned messages + recent noise
+    # 1. Gather candidates: unassigned messages + noise still in active pool
     unassigned = assignments.get_unassigned(visible_ids)
-    recent_noise = assignments.get_recent_noise(iteration, noise_window)
-    candidates = list(set(unassigned + recent_noise))
+    all_noise = assignments.get_all_noise()
+    visible_noise = [vid for vid in all_noise if vid in visible_ids]
+    candidates = list(set(unassigned + visible_noise))
 
     if verbose and candidates:
-        print(f"  Processing {len(unassigned)} new + {len(recent_noise)} noise = {len(candidates)} candidates")
+        print(f"  Processing {len(unassigned)} new + {len(visible_noise)} noise = {len(candidates)} candidates")
 
-    stats = {"assigned": 0, "new_clusters": 0, "noise": 0, "fossilized": 0}
+    stats = {"assigned": 0, "new_clusters": 0, "noise": 0}
 
     if not candidates:
         return stats
@@ -193,23 +192,18 @@ def process_iteration(
             for vid in vids:
                 unmatched.remove(vid)
 
-    # 4. Mark remaining as noise
+    # 4. Mark remaining as noise (or keep as noise if already)
     for vid in unmatched:
         existing = assignments.get(vid)
-        if existing and existing.cluster_id == ASSIGNMENT_NOISE:
-            # Already noise, check if should fossilize
-            if existing.noise_since and (iteration - existing.noise_since) >= noise_window:
-                assignments.mark_fossil(vid, iteration)
-                stats["fossilized"] += 1
-            # else: stays as noise, will be reconsidered
-        else:
+        if not existing or existing.cluster_id != ASSIGNMENT_NOISE:
             # New noise
             assignments.mark_noise(vid, iteration)
             stats["noise"] += 1
+        # Already noise: stays as noise, reconsidered while in active pool
 
     if verbose:
         print(f"  Assigned: {stats['assigned']}, New clusters: {stats['new_clusters']}, "
-              f"Noise: {stats['noise']}, Fossilized: {stats['fossilized']}")
+              f"Noise: {stats['noise']}")
 
     return stats
 

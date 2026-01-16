@@ -11,7 +11,6 @@ from .models import (
     AssignmentEntry,
     AssignmentTable,
     ASSIGNMENT_NOISE,
-    ASSIGNMENT_FOSSIL,
 )
 from .algorithm import (
     cosine_distance,
@@ -30,7 +29,6 @@ __all__ = [
     "AssignmentEntry",
     "AssignmentTable",
     "ASSIGNMENT_NOISE",
-    "ASSIGNMENT_FOSSIL",
     # Algorithm
     "cosine_distance",
     "find_nearest_cluster",

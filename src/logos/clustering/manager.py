@@ -17,7 +17,6 @@ from .models import (
     ClusterRegistry,
     AssignmentTable,
     ASSIGNMENT_NOISE,
-    ASSIGNMENT_FOSSIL,
 )
 from .algorithm import (
     cosine_distance,
@@ -146,7 +145,6 @@ class ClusterManager:
         iteration: int,
         centroid_threshold: float = 0.3,
         min_cluster_size: int = 3,
-        noise_window: int = 20,
         verbose: bool = True,
     ) -> dict:
         """Process one iteration of incremental clustering."""
@@ -168,7 +166,6 @@ class ClusterManager:
             iteration,
             centroid_threshold=centroid_threshold,
             min_cluster_size=min_cluster_size,
-            noise_window=noise_window,
             verbose=verbose,
         )
 
@@ -183,13 +180,10 @@ class ClusterManager:
         # Count assignments by type
         cluster_counts = {}
         noise_count = 0
-        fossil_count = 0
 
         for entry in self.assignments.assignments.values():
             if entry.cluster_id == ASSIGNMENT_NOISE:
                 noise_count += 1
-            elif entry.cluster_id == ASSIGNMENT_FOSSIL:
-                fossil_count += 1
             else:
                 cluster_counts[entry.cluster_id] = cluster_counts.get(entry.cluster_id, 0) + 1
 
@@ -198,7 +192,6 @@ class ClusterManager:
             "num_clusters": len(self.registry.clusters),
             "total_assigned": sum(cluster_counts.values()),
             "noise": noise_count,
-            "fossil": fossil_count,
             "clusters": [
                 {
                     "id": c.id,
