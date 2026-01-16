@@ -9,8 +9,10 @@ Usage:
     mind run 10                            # Run N iterations
     mind step                              # Single iteration
     mind message "text"                    # Send message to mind
-    mind cluster bootstrap                 # Bootstrap clustering
+    mind message -f prompt.md              # Send message from file
+    cat prompt.md | mind message           # Send message via pipe
     mind cluster status                    # Show cluster state
+    mind cluster show cluster_0            # Show cluster members
 """
 
 import argparse
@@ -151,17 +153,46 @@ def cmd_step(args) -> int:
 
 def cmd_message(args) -> int:
     """Send a message to the mind."""
+    # Determine message text from: positional arg > -f file > stdin
+    text = None
+
+    if args.text:
+        text = args.text
+    elif args.file:
+        file_path = Path(args.file)
+        if not file_path.exists():
+            print(f"File not found: {args.file}")
+            return 1
+        text = file_path.read_text()
+    elif not sys.stdin.isatty():
+        # Stdin is being piped
+        text = sys.stdin.read()
+    else:
+        print("Usage: mind message \"text\" | mind message -f file.txt | echo \"text\" | mind message")
+        return 1
+
+    text = text.strip()
+    if not text:
+        print("Empty message")
+        return 1
+
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
 
     session.add_message(
         source='user',
         to=args.to,
-        text=args.text,
+        text=text,
     )
     session.save()
 
-    print(f"Message sent to {args.to}")
+    # Show preview for long messages
+    if len(text) > 80:
+        preview = text[:77] + "..."
+        print(f"Message sent to {args.to} ({len(text)} chars): {preview}")
+    else:
+        print(f"Message sent to {args.to}: {text}")
+
     return 0
 
 
@@ -180,14 +211,19 @@ def cmd_cluster(args) -> int:
             return 0
 
         print(f"Clusters: {status.get('num_clusters', 0)}")
-        print(f"Assigned: {status.get('assigned', 0)}")
+        print(f"Assigned: {status.get('total_assigned', 0)}")
         print(f"Noise: {status.get('noise', 0)}")
         print(f"Fossil: {status.get('fossil', 0)}")
 
         if status.get('clusters'):
             print("\nCluster details:")
-            for cid, info in sorted(status['clusters'].items()):
-                print(f"  {cid}: {info.get('member_count', 0)} members")
+            for cluster in status['clusters']:
+                cid = cluster.get('id', '?')
+                members = cluster.get('members', 0)
+                rep = cluster.get('representative', '')
+                print(f"  {cid}: {members} members")
+                if rep:
+                    print(f"    └─ {rep}")
 
         return 0
 
@@ -288,7 +324,8 @@ def main():
 
     # message
     p_msg = subparsers.add_parser('message', help='Send message to mind')
-    p_msg.add_argument('text', help='Message text')
+    p_msg.add_argument('text', nargs='?', help='Message text (or use -f or pipe)')
+    p_msg.add_argument('-f', '--file', help='Read message from file')
     p_msg.add_argument('--to', default='mind_0', help='Recipient (default: mind_0)')
 
     # cluster

@@ -18,6 +18,21 @@ from typing import Optional
 import yaml
 
 
+# Custom YAML dumper that uses literal block style for multiline strings
+class _LiteralDumper(yaml.SafeDumper):
+    pass
+
+
+def _str_representer(dumper, data):
+    """Use literal block style (|) for strings containing newlines."""
+    if '\n' in data:
+        return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+
+_LiteralDumper.add_representer(str, _str_representer)
+
+
 class Message:
     """A single message in the message pool."""
 
@@ -183,7 +198,8 @@ class MessagePool:
             mode='w', dir=self.pool_dir, suffix='.tmp', delete=False
         ) as f:
             temp_path = Path(f.name)
-            yaml.safe_dump(data, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(data, f, Dumper=_LiteralDumper,
+                      default_flow_style=False, allow_unicode=True)
 
         shutil.move(str(temp_path), str(path))
 

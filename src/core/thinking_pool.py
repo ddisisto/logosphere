@@ -23,6 +23,21 @@ import numpy as np
 import yaml
 
 
+# Custom YAML dumper that uses literal block style for multiline strings
+class _LiteralDumper(yaml.SafeDumper):
+    pass
+
+
+def _str_representer(dumper, data):
+    """Use literal block style (|) for strings containing newlines."""
+    if '\n' in data:
+        return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+
+_LiteralDumper.add_representer(str, _str_representer)
+
+
 class Thought:
     """A single thought in the thinking pool."""
 
@@ -212,7 +227,8 @@ class ThinkingPool:
             mode='w', dir=self.pool_dir, suffix='.tmp', delete=False
         ) as f:
             temp_path = Path(f.name)
-            yaml.safe_dump(pool_data, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(pool_data, f, Dumper=_LiteralDumper,
+                      default_flow_style=False, allow_unicode=True)
 
         shutil.move(str(temp_path), str(self._pool_path))
 
