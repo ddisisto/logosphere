@@ -230,3 +230,19 @@ When no user message is pending:
 - **Draft annotations:** Mind could mark drafts with confidence or "still working" flags
 - **Draft diffs:** Show what changed between drafts
 - **Auto-accept:** If Mind doesn't produce new draft for N iterations, auto-accept latest
+
+---
+
+## Implementation Checklist
+
+When implementing this design:
+
+1. [ ] Create `DraftPool` or extend `MessagePool` with draft semantics
+2. [ ] Update `format_input()` to produce new dialogue schema
+3. [ ] Update Mind parser for draft output
+4. [ ] Add CLI commands: `mind accept`, `mind drafts`, `mind history`
+5. [ ] Add config params: `draft_buffer_size`, `history_pairs`
+6. [ ] Update system prompt with dialogue section
+7. [ ] **Update CLAUDE.md** - reflect new architecture, CLI commands, and concepts
+
+The final step is critical: CLAUDE.md should always reflect the current state of the implementation. After any significant architectural change, review and update it to prevent documentation drift.
