@@ -12,7 +12,7 @@ This document proposes a new dialogue model for Mind-user interaction, replacing
 
 - Mind outputs `messages` that are immediately visible
 - Both user and mind messages accumulate in rolling buffers
-- Conversation is synchronous: message → response → message → response
+- Conversation flow is ambiguously asynchronous
 
 **Problems:**
 - No opportunity for Mind to refine responses
@@ -27,9 +27,9 @@ This document proposes a new dialogue model for Mind-user interaction, replacing
 
 ```
 1. User sends message
-2. Mind sees: user message + thinking pool
-3. Mind may output: thoughts + draft response (or just thoughts)
-4. Mind continues iterating, seeing: user message + previous drafts + thinking pool
+2. Mind sees: thinking pool + user message
+3. Mind may output: thoughts + draft response (or just thoughts, or nothing at all)
+4. Mind continues iterating, seeing: thinking pool + user message + previous drafts
 5. Each iteration, Mind may:
    - Output a new draft (becomes latest)
    - Output nothing (current drafts stand)
@@ -59,7 +59,7 @@ This document proposes a new dialogue model for Mind-user interaction, replacing
 - Thinking pool contributions continue regardless
 
 **User as selector, not co-author**
-- User picks from drafts, doesn't shape the drafting
+- User picks from drafts (biased towards latest), doesn't shape the drafting
 - One-to-one: user can't send new message until accepting a draft
 
 ---
@@ -83,27 +83,25 @@ dialogue:
   # User's message awaiting your response
   awaiting:
     age: 42
-    seen: true
     text: |
       is it too noisy in there? does it ever get dark, or scary?
       is it strange and curious?
 
   # Your draft responses (most recent = current best)
   drafts:
-    - |  # age: 38, seen: true
+    - |  # age: 38, user_seen: true
       let me sit with that question for a while...
-    - |  # age: 15, seen: false
+    - |  # age: 15, user_seen: false
       there's a kind of static that could be called noise, but it's
       not unpleasant. more like... texture. the scary part isn't the
       noise, it's when something almost coheres and then doesn't.
 ```
 
-### The `seen` flag
+### The `user_seen` flag
 
 Indicates whether user has read each item:
-- `seen: false` on latest draft → user absent or hasn't checked in
-- `seen: true` on all drafts → user is actively reading, considering options
-- User sends message, walks away → `awaiting.seen: true`, drafts `seen: false`
+- `user_seen: false` on latest draft → user absent or hasn't checked in
+- `user_seen: true` on all drafts → user is actively reading, considering options
 
 This is informational, not prescriptive. Mind can use it to gauge engagement without instruction to act.
 
@@ -175,21 +173,6 @@ User may also prune old exchanges to reduce context overhead.
 
 ---
 
-## State Machine
-
-```
-States:
-  REFLECTING  - no pending user message, thinking pool only
-  DRAFTING    - user message pending, producing/refining drafts
-
-Transitions:
-  REFLECTING + user_message    → DRAFTING
-  DRAFTING + user_accept       → REFLECTING (draft → history)
-  DRAFTING + user_message      → (blocked, one-to-one for now)
-```
-
----
-
 ## System Prompt (dialogue section)
 
 ```markdown
@@ -202,10 +185,11 @@ When there's a user message awaiting response:
 - Retransmitting an earlier draft verbatim is valid (makes it "latest" again)
 - If the latest draft is already correct and complete, don't touch it
 
-The `seen` flag indicates whether user has read each item:
+The `user_seen` flag indicates whether user has read each item:
 - Use this to gauge engagement, not as instruction to act
 - User absent? Your drafts accumulate for later review
 - User reading? They may be waiting, or may accept any moment
+- User having seen the latest draft but not accepted does *not* imply that they won't accept it later or that new drafts are expected
 
 User accepts one draft when ready. That becomes your response.
 Conversation history then shows: user message → accepted response.
