@@ -14,7 +14,6 @@ import numpy as np
 
 # Assignment states
 ASSIGNMENT_NOISE = "noise"
-ASSIGNMENT_FOSSIL = "fossil"
 
 
 @dataclass
@@ -96,19 +95,15 @@ class AssignmentEntry:
     """Assignment record for a single message."""
 
     vector_id: int
-    cluster_id: str              # cluster_id, "noise", or "fossil"
+    cluster_id: str              # cluster_id or "noise"
     assigned_at: int             # Iteration when assigned
-    noise_since: Optional[int]   # If noise, when it became noise (for aging)
 
     def to_dict(self) -> dict:
-        d = {
+        return {
             "vector_id": self.vector_id,
             "cluster_id": self.cluster_id,
             "assigned_at": self.assigned_at,
         }
-        if self.noise_since is not None:
-            d["noise_since"] = self.noise_since
-        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> AssignmentEntry:
@@ -116,7 +111,6 @@ class AssignmentEntry:
             vector_id=data["vector_id"],
             cluster_id=data["cluster_id"],
             assigned_at=data["assigned_at"],
-            noise_since=data.get("noise_since"),
         )
 
 
@@ -135,7 +129,6 @@ class AssignmentTable:
             vector_id=vector_id,
             cluster_id=cluster_id,
             assigned_at=iteration,
-            noise_since=None,
         )
 
     def mark_noise(self, vector_id: int, iteration: int) -> None:
@@ -144,24 +137,13 @@ class AssignmentTable:
             vector_id=vector_id,
             cluster_id=ASSIGNMENT_NOISE,
             assigned_at=iteration,
-            noise_since=iteration,
         )
 
-    def mark_fossil(self, vector_id: int, iteration: int) -> None:
-        """Mark noise as fossilized (no longer reconsidered)."""
-        entry = self.assignments.get(vector_id)
-        if entry and entry.cluster_id == ASSIGNMENT_NOISE:
-            entry.cluster_id = ASSIGNMENT_FOSSIL
-            entry.assigned_at = iteration
-
-    def get_recent_noise(self, current_iteration: int, window: int) -> list[int]:
-        """Get vector_ids of noise from the last N iterations."""
-        cutoff = current_iteration - window
+    def get_all_noise(self) -> list[int]:
+        """Get all vector_ids currently marked as noise."""
         return [
             vid for vid, entry in self.assignments.items()
             if entry.cluster_id == ASSIGNMENT_NOISE
-            and entry.noise_since is not None
-            and entry.noise_since >= cutoff
         ]
 
     def get_unassigned(self, vector_ids: set[int]) -> list[int]:
