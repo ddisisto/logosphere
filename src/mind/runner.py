@@ -110,6 +110,18 @@ class MindRunner:
             cluster_assignments=cluster_assignments,
         )
 
+        if self.config.debug:
+            print("\n" + "=" * 60)
+            print("DEBUG: LLM REQUEST")
+            print("=" * 60)
+            print(f"Model: {self.session.config.model}")
+            print(f"Token limit: {self.session.config.token_limit}")
+            print("-" * 60)
+            print("USER INPUT:")
+            print("-" * 60)
+            print(user_input)
+            print("=" * 60)
+
         # 5. Invoke Mind
         output: MindOutput = invoke_mind(
             system_prompt=self.system_prompt,
@@ -117,6 +129,13 @@ class MindRunner:
             model=self.session.config.model,
             token_limit=self.session.config.token_limit,
         )
+
+        if self.config.debug:
+            print("\n" + "=" * 60)
+            print("DEBUG: LLM RESPONSE")
+            print("=" * 60)
+            print(output.raw)
+            print("=" * 60 + "\n")
 
         if output.skipped:
             if self.config.verbose:

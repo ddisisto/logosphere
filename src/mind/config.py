@@ -19,3 +19,4 @@ class MindConfig:
 
     # Output
     verbose: bool = True
+    debug: bool = False  # Dump full request/response

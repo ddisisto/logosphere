@@ -140,7 +140,7 @@ def cmd_step(args) -> int:
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
 
-    config = MindConfig(verbose=True)
+    config = MindConfig(verbose=True, debug=args.debug)
     runner = MindRunner(session, config)
 
     try:
@@ -319,7 +319,8 @@ def main():
     p_run.add_argument('-q', '--quiet', action='store_true', help='Quiet mode')
 
     # step
-    subparsers.add_parser('step', help='Single iteration')
+    p_step = subparsers.add_parser('step', help='Single iteration')
+    p_step.add_argument('--debug', action='store_true', help='Dump full LLM request/response')
 
     # message
     p_msg = subparsers.add_parser('message', help='Send message to mind')
