@@ -81,12 +81,17 @@ mind status                            # Show current state
 ### Running Iterations
 
 ```bash
-mind run                               # Run until draft produced (default)
+mind run                               # Run until stop (observe mode, max 100)
+mind run -b                            # Background: drafts unseen, stop on hard signal only
 mind run 10                            # Run exactly 10 iterations
-mind run --max 50                      # Safety limit for run-until-draft
+mind run -b 10                         # Background: 10 iterations, drafts unseen
 mind step                              # Single iteration
 mind step --debug                      # Dump full LLM request/response
 ```
+
+**Modes:**
+- Observe (default): drafts marked seen, stops on each draft
+- Background (`-b`): drafts unseen, stops on hard signal only (3+ consecutive no-drafts, or true silence)
 
 ### Dialogue
 
@@ -97,6 +102,8 @@ cat prompt.md | mind message           # Send via pipe
 mind drafts                            # Show current drafts (newest first)
 mind drafts seen                       # Mark all drafts as seen
 mind drafts seen 1 3                   # Mark specific drafts as seen
+mind drafts archive                    # List all archived exchanges
+mind drafts archive exc_42_000         # Show all drafts for an exchange
 mind accept                            # Accept latest draft
 mind accept 2                          # Accept specific draft
 mind history                           # Show conversation history
@@ -141,8 +148,16 @@ Clustering auto-initializes on first iteration - no bootstrap required.
 - Draft-based user ↔ mind communication
 - States: idle (history only) or drafting (awaiting + drafts)
 - User sends message → mind produces drafts → user accepts one
-- Accepted exchanges form conversation history
-- Non-accepted drafts are pruned
+- Accepted exchanges form conversation history (unlimited storage)
+- All drafts stored (unlimited), but mind sees display-limited subset
+- All drafts archived to `draft_archive.jsonl` when exchange completes
+- Active drafts cleared after archiving; archive is append-only forever
+
+**Signal Channel:**
+- Draft buffer serves as bidirectional communication channel
+- Hard signal: no draft output = demands user attention
+- Soft signal: `+1` draft = endorses latest, still iterating
+- True silence (no draft, no thoughts) = immediate stop signal
 
 ### Dialogue Flow
 
@@ -238,8 +253,9 @@ Stable, persistent cluster assignments (see `docs/incremental-clustering-design.
 |-----------|---------|--------|
 | `k_samples` | 5 | Thoughts sampled per iteration |
 | `active_pool_size` | 50 | Size of thinking pool |
-| `draft_buffer_size` | 5 | Drafts retained per exchange |
-| `history_pairs` | 10 | Conversation exchanges to show |
+| `draft_display_chars` | 2000 | Max chars of drafts to show mind |
+| `draft_display_count` | 16 | Max number of drafts to show mind |
+| `history_display_pairs` | 10 | Conversation pairs to show mind |
 | `model` | claude-haiku-4.5 | LLM for mind invocations |
 | `token_limit` | 4000 | Max tokens for LLM response |
 | `min_cluster_size` | 3 | HDBSCAN threshold for new clusters |
@@ -278,8 +294,9 @@ iteration: 247
 config:
   k_samples: 5
   active_pool_size: 50
-  draft_buffer_size: 5
-  history_pairs: 10
+  draft_display_chars: 2000
+  draft_display_count: 16
+  history_display_pairs: 10
   model: anthropic/claude-haiku-4.5
   token_limit: 4000
   embedding_model: openai/text-embedding-3-small
@@ -313,7 +330,21 @@ history:
     time: 2026-01-15T10:05:00+00:00
     text: |
       earlier response
+    accepted_draft_index: 3
+    draft_archive_id: exc_100_000
 ```
+
+### dialogue/draft_archive.jsonl
+
+Append-only archive of all drafts from completed exchanges. Each line is a JSON object:
+
+```json
+{"exchange_id": "exc_100_000", "draft_index": 1, "iter_created": 102, "time_created": "2026-01-15T10:02:00+00:00", "text": "first draft...", "user_seen": true, "accepted": false, "accepted_by_exchange": null}
+{"exchange_id": "exc_100_000", "draft_index": 2, "iter_created": 103, "time_created": "2026-01-15T10:03:00+00:00", "text": "second draft...", "user_seen": true, "accepted": false, "accepted_by_exchange": null}
+{"exchange_id": "exc_100_000", "draft_index": 3, "iter_created": 105, "time_created": "2026-01-15T10:05:00+00:00", "text": "accepted response", "user_seen": true, "accepted": true, "accepted_by_exchange": "exc_100_000"}
+```
+
+Exchange IDs follow the format `exc_{awaiting_iter}_{sequence:03d}` where the sequence handles rare cases of multiple exchanges at the same iteration.
 
 ---
 

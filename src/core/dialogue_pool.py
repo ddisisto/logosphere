@@ -4,6 +4,7 @@ DialoguePool - Draft-based dialogue system for Logosphere v2.
 Replaces MessagePool with a structured dialogue flow:
 - User sends message → mind drafts responses → user accepts one
 - Strict one-to-one: can't send new message until accepting a draft
+- All drafts preserved with absolute indices (never pruned)
 
 Storage:
     dialogue/
@@ -12,9 +13,10 @@ Storage:
 
 from __future__ import annotations
 
+import json
 import tempfile
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -55,17 +57,25 @@ class UserMessage:
 @dataclass
 class Draft:
     """A draft response from the mind."""
+    index: int  # Absolute index within this exchange (1, 2, 3, ...)
     iter: int
     time: str
     text: str
     seen: bool = False
 
     def to_dict(self) -> dict:
-        return {'iter': self.iter, 'time': self.time, 'text': self.text, 'seen': self.seen}
+        return {
+            'index': self.index,
+            'iter': self.iter,
+            'time': self.time,
+            'text': self.text,
+            'seen': self.seen,
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> Draft:
         return cls(
+            index=data.get('index', 0),  # Legacy compat
             iter=data['iter'],
             time=data['time'],
             text=data['text'],
@@ -80,9 +90,16 @@ class HistoryEntry:
     iter: int
     time: str
     text: str
+    accepted_draft_index: Optional[int] = None  # For mind entries: which draft was accepted
+    draft_archive_id: Optional[str] = None  # For mind entries: exchange ID in draft archive
 
     def to_dict(self) -> dict:
-        return {'role': self.role, 'iter': self.iter, 'time': self.time, 'text': self.text}
+        d = {'role': self.role, 'iter': self.iter, 'time': self.time, 'text': self.text}
+        if self.accepted_draft_index is not None:
+            d['accepted_draft_index'] = self.accepted_draft_index
+        if self.draft_archive_id is not None:
+            d['draft_archive_id'] = self.draft_archive_id
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> HistoryEntry:
@@ -91,6 +108,8 @@ class HistoryEntry:
             iter=data['iter'],
             time=data['time'],
             text=data['text'],
+            accepted_draft_index=data.get('accepted_draft_index'),
+            draft_archive_id=data.get('draft_archive_id'),
         )
 
 
@@ -100,32 +119,34 @@ class DialoguePool:
 
     State machine:
     - IDLE: No awaiting message. History available for context.
-    - DRAFTING: User message awaiting response. Drafts accumulate.
+    - DRAFTING: User message awaiting response. Drafts accumulate (never pruned).
 
     Flow:
     1. user sends message → state becomes DRAFTING
-    2. mind iterations produce drafts
+    2. mind iterations produce drafts (all preserved with absolute indices)
     3. user marks drafts as seen (optional)
     4. user accepts a draft → state becomes IDLE, exchange added to history
+
+    Signal semantics:
+    - opt-out (no draft): demands user attention to current buffer
+    - short drafts: cycle buffer fast, can be used as signals
+    - silence after good draft: implicit "ship it"
     """
 
     def __init__(
         self,
         pool_dir: Path,
-        draft_buffer_size: int = 5,
-        history_pairs: int = 10,
     ):
         self.pool_dir = Path(pool_dir)
-        self.draft_buffer_size = draft_buffer_size
-        self.history_pairs = history_pairs  # Max user+response pairs to retain
 
         # State
         self.awaiting: Optional[UserMessage] = None
-        self.drafts: list[Draft] = []  # Oldest first in storage
-        self.history: list[HistoryEntry] = []  # Oldest first
+        self.drafts: list[Draft] = []  # All drafts, oldest first, never pruned
+        self.history: list[HistoryEntry] = []  # Oldest first, never pruned
 
-        # Path
+        # Paths
         self._pool_path = self.pool_dir / 'pool.yaml'
+        self._archive_path = self.pool_dir / 'draft_archive.jsonl'
 
         # Load if exists
         if self._pool_path.exists():
@@ -156,61 +177,78 @@ class DialoguePool:
         )
         self.drafts = []
 
-    def add_draft(self, text: str, iter: int) -> None:
+    def add_draft(self, text: str, iter: int, seen: bool = False) -> int:
         """
         Mind produces a draft response.
 
-        If buffer is full, oldest draft is discarded.
+        All drafts are preserved with absolute indices.
+
+        Args:
+            text: Draft content
+            iter: Current iteration number
+            seen: Mark as seen immediately (True when user is observing)
+
+        Returns:
+            The absolute index of the new draft
         """
         if not self.is_drafting:
             # No awaiting message - this shouldn't happen in normal flow
-            # but we'll allow it (draft goes nowhere useful)
-            return
+            return -1
+
+        # Absolute index is 1-based, sequential
+        index = len(self.drafts) + 1
 
         draft = Draft(
+            index=index,
             iter=iter,
             time=datetime.now(timezone.utc).isoformat(),
             text=text,
-            seen=False,
+            seen=seen,
         )
 
         self.drafts.append(draft)
-
-        # Enforce buffer limit (drop oldest)
-        if len(self.drafts) > self.draft_buffer_size:
-            self.drafts = self.drafts[-self.draft_buffer_size:]
+        return index
 
     def mark_seen(self, indices: Optional[list[int]] = None) -> None:
         """
         Mark drafts as seen.
 
         Args:
-            indices: 1-based indices (1=latest). None means mark all.
+            indices: Absolute indices (1, 2, 3...). None means mark all.
         """
         if indices is None:
             for draft in self.drafts:
                 draft.seen = True
         else:
-            # Convert 1-based (newest first) to 0-based (oldest first in storage)
-            for i in indices:
-                if 1 <= i <= len(self.drafts):
-                    # i=1 is latest = last in storage
-                    storage_idx = len(self.drafts) - i
-                    self.drafts[storage_idx].seen = True
+            for idx in indices:
+                # Find draft with this absolute index
+                for draft in self.drafts:
+                    if draft.index == idx:
+                        draft.seen = True
+                        break
 
-    def accept(self, index: int = 1) -> Draft:
+    def mark_all_unseen_as_seen(self) -> int:
+        """Mark all currently unseen drafts as seen. Returns count marked."""
+        count = 0
+        for draft in self.drafts:
+            if not draft.seen:
+                draft.seen = True
+                count += 1
+        return count
+
+    def accept(self, index: int) -> Draft:
         """
-        Accept a draft, moving the exchange to history.
+        Accept a draft by absolute index, moving the exchange to history.
 
         Args:
-            index: 1-based index (1=latest, default)
+            index: Absolute index of draft to accept (1, 2, 3...)
 
         Returns:
             The accepted draft
 
         Raises:
             RuntimeError: If not in drafting state or no drafts
-            IndexError: If index out of range
+            IndexError: If index not found
         """
         if not self.is_drafting:
             raise RuntimeError("No pending message to accept draft for.")
@@ -218,14 +256,23 @@ class DialoguePool:
         if not self.drafts:
             raise RuntimeError("No drafts available to accept.")
 
-        if not (1 <= index <= len(self.drafts)):
-            raise IndexError(f"Draft index {index} out of range (1-{len(self.drafts)})")
+        # Find draft by absolute index
+        accepted = None
+        for draft in self.drafts:
+            if draft.index == index:
+                accepted = draft
+                break
 
-        # Get the draft (1=latest = last in storage)
-        storage_idx = len(self.drafts) - index
-        accepted = self.drafts[storage_idx]
+        if accepted is None:
+            valid = [d.index for d in self.drafts]
+            raise IndexError(f"Draft index {index} not found. Valid indices: {valid}")
 
-        # Add to history: user message then accepted response
+        # Generate exchange ID and archive all drafts before clearing
+        exchange_id = self._generate_exchange_id()
+        self._archive_all_drafts(exchange_id, accepted.index)
+
+        # Add to history: user message then accepted response (with draft index and archive ID)
+        # History is never pruned - unlimited storage
         self.history.append(HistoryEntry(
             role='user',
             iter=self.awaiting.iter,
@@ -237,12 +284,9 @@ class DialoguePool:
             iter=accepted.iter,
             time=accepted.time,
             text=accepted.text,
+            accepted_draft_index=accepted.index,
+            draft_archive_id=exchange_id,
         ))
-
-        # Trim history (keep last N pairs = 2N entries)
-        max_entries = self.history_pairs * 2
-        if len(self.history) > max_entries:
-            self.history = self.history[-max_entries:]
 
         # Clear drafting state
         self.awaiting = None
@@ -250,21 +294,206 @@ class DialoguePool:
 
         return accepted
 
-    def get_drafts_for_display(self) -> list[tuple[int, Draft]]:
+    def get_latest_draft(self) -> Optional[Draft]:
+        """Get the most recent draft, or None if no drafts."""
+        return self.drafts[-1] if self.drafts else None
+
+    def get_drafts_for_display(
+        self,
+        max_chars: int = 2000,
+        max_count: int = 16,
+    ) -> list[Draft]:
         """
-        Get drafts for display (newest first, 1-indexed).
+        Get drafts for display to mind, newest first, within limits.
+
+        Display stops when EITHER limit is reached:
+        - max_chars: total character count
+        - max_count: number of drafts
 
         Returns:
-            List of (display_index, draft) tuples
+            List of drafts (newest first) that fit within limits
         """
         result = []
-        for i, draft in enumerate(reversed(self.drafts)):
-            result.append((i + 1, draft))
+        total_chars = 0
+
+        # Iterate newest first
+        for draft in reversed(self.drafts):
+            if len(result) >= max_count:
+                break
+            if total_chars + len(draft.text) > max_chars and result:
+                # Would exceed char limit and we have at least one
+                break
+            result.append(draft)
+            total_chars += len(draft.text)
+
         return result
 
+    def get_all_drafts(self) -> list[Draft]:
+        """Get all drafts (oldest first) for full display to user."""
+        return list(self.drafts)
+
     def get_history(self) -> list[HistoryEntry]:
-        """Get conversation history (oldest first)."""
+        """Get all conversation history (oldest first)."""
         return list(self.history)
+
+    def get_history_for_display(self, max_entries: int) -> list[HistoryEntry]:
+        """
+        Get history for display to mind, limited to last N entries.
+
+        Args:
+            max_entries: Maximum number of entries to return
+
+        Returns:
+            List of history entries (oldest first within the returned subset)
+        """
+        if len(self.history) <= max_entries:
+            return list(self.history)
+        return list(self.history[-max_entries:])
+
+    # -------------------------------------------------------------------------
+    # Exchange ID and Draft Archive
+    # -------------------------------------------------------------------------
+
+    def _generate_exchange_id(self) -> str:
+        """
+        Generate a unique exchange ID for archiving drafts.
+
+        Format: exc_{awaiting_iter}_{sequence:03d}
+
+        The sequence number handles the (rare) case of multiple exchanges
+        starting at the same iteration (e.g., after session restoration).
+        """
+        if self.awaiting is None:
+            raise RuntimeError("Cannot generate exchange ID without awaiting message")
+
+        base = f"exc_{self.awaiting.iter}"
+
+        # Check existing exchanges to find the next sequence number
+        sequence = 0
+        if self._archive_path.exists():
+            with open(self._archive_path) as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        eid = entry.get('exchange_id', '')
+                        if eid.startswith(base + '_'):
+                            # Extract sequence number
+                            suffix = eid[len(base) + 1:]
+                            try:
+                                seq = int(suffix)
+                                sequence = max(sequence, seq + 1)
+                            except ValueError:
+                                pass
+                    except json.JSONDecodeError:
+                        pass
+
+        return f"{base}_{sequence:03d}"
+
+    def _archive_all_drafts(self, exchange_id: str, accepted_index: int) -> None:
+        """
+        Archive all current drafts to the JSONL archive file.
+
+        Each entry contains:
+        - exchange_id: The exchange this draft belongs to
+        - draft_index: The absolute index of this draft within the exchange
+        - iter_created: Iteration when draft was created
+        - time_created: ISO timestamp when draft was created
+        - text: The draft text content
+        - user_seen: Whether the user had marked this draft as seen
+        - accepted: Whether this draft was the accepted one
+        - accepted_by_exchange: The exchange_id (redundant but useful for queries)
+        """
+        self.pool_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(self._archive_path, 'a') as f:
+            for draft in self.drafts:
+                entry = {
+                    'exchange_id': exchange_id,
+                    'draft_index': draft.index,
+                    'iter_created': draft.iter,
+                    'time_created': draft.time,
+                    'text': draft.text,
+                    'user_seen': draft.seen,
+                    'accepted': draft.index == accepted_index,
+                    'accepted_by_exchange': exchange_id if draft.index == accepted_index else None,
+                }
+                f.write(json.dumps(entry) + '\n')
+
+    def get_exchange_drafts(self, exchange_id: str) -> list[dict]:
+        """
+        Retrieve all archived drafts for a given exchange ID.
+
+        Returns:
+            List of draft entries (dicts) for the exchange, sorted by draft_index
+        """
+        if not self._archive_path.exists():
+            return []
+
+        results = []
+        with open(self._archive_path) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    if entry.get('exchange_id') == exchange_id:
+                        results.append(entry)
+                except json.JSONDecodeError:
+                    pass
+
+        # Sort by draft_index
+        results.sort(key=lambda x: x.get('draft_index', 0))
+        return results
+
+    def list_exchanges(self) -> list[dict]:
+        """
+        List all exchange IDs in the archive with metadata.
+
+        Returns:
+            List of dicts with:
+            - exchange_id: The exchange ID
+            - draft_count: Number of drafts in this exchange
+            - accepted_index: Index of the accepted draft
+            - first_iter: Iteration of first draft
+            - last_iter: Iteration of last draft
+        """
+        if not self._archive_path.exists():
+            return []
+
+        exchanges: dict[str, dict] = {}
+
+        with open(self._archive_path) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    eid = entry.get('exchange_id')
+                    if not eid:
+                        continue
+
+                    if eid not in exchanges:
+                        exchanges[eid] = {
+                            'exchange_id': eid,
+                            'draft_count': 0,
+                            'accepted_index': None,
+                            'first_iter': entry.get('iter_created'),
+                            'last_iter': entry.get('iter_created'),
+                        }
+
+                    exchanges[eid]['draft_count'] += 1
+
+                    if entry.get('accepted'):
+                        exchanges[eid]['accepted_index'] = entry.get('draft_index')
+
+                    iter_created = entry.get('iter_created')
+                    if iter_created is not None:
+                        if exchanges[eid]['first_iter'] is None or iter_created < exchanges[eid]['first_iter']:
+                            exchanges[eid]['first_iter'] = iter_created
+                        if exchanges[eid]['last_iter'] is None or iter_created > exchanges[eid]['last_iter']:
+                            exchanges[eid]['last_iter'] = iter_created
+
+                except json.JSONDecodeError:
+                    pass
+
+        # Sort by exchange_id (which implicitly sorts by creation order due to iter prefix)
+        return sorted(exchanges.values(), key=lambda x: x['exchange_id'])
 
     # -------------------------------------------------------------------------
     # Persistence

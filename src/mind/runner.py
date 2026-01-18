@@ -27,6 +27,7 @@ class StepResult:
     """Result of a single iteration."""
     thoughts_added: int
     draft_added: bool
+    hard_signal: bool  # Mind output no draft when drafts exist = attention demand
     skipped: bool
     raw_output: str
 
@@ -66,9 +67,12 @@ class MindRunner:
         # Load system prompt
         self.system_prompt = load_system_prompt()
 
-    def step(self) -> StepResult:
+    def _step_inner(self, observe: bool = True) -> StepResult:
         """
-        Execute single iteration.
+        Execute single iteration (internal implementation).
+
+        Args:
+            observe: User presence mode. If True, drafts are marked as seen immediately.
 
         Raises:
             RuntimeError: If not in drafting state (no awaiting message)
@@ -109,12 +113,18 @@ class MindRunner:
             print(f"\n[Iteration {self.session.iteration}] "
                   f"Sampled {len(thoughts)} thoughts, state={state}")
 
-        # 3. Format YAML input with dialogue pool
+        # 3. Get display-limited drafts and history
+        drafts_for_display = self.session.get_drafts_for_mind()
+        history_for_display = self.session.get_history_for_mind()
+
+        # 4. Format YAML input with dialogue pool
         user_input = format_input(
             mind_id=self.config.mind_id,
             current_iter=self.session.iteration,
             thoughts=thoughts,
             dialogue_pool=self.session.dialogue_pool,
+            drafts_for_display=drafts_for_display,
+            history_for_display=history_for_display,
             cluster_assignments=cluster_assignments,
         )
 
@@ -153,6 +163,7 @@ class MindRunner:
             return StepResult(
                 thoughts_added=0,
                 draft_added=False,
+                hard_signal=False,
                 skipped=True,
                 raw_output=output.raw,
             )
@@ -178,13 +189,22 @@ class MindRunner:
 
         # 6. Process draft → dialogue_pool
         draft_added = False
+        hard_signal = False
         if output.draft:
-            self.session.add_draft(output.draft)
+            self.session.add_draft(output.draft, seen=observe)
             draft_added = True
 
             if self.config.verbose:
+                seen_note = " [seen]" if observe else ""
                 preview = output.draft[:60] + "..." if len(output.draft) > 60 else output.draft
-                print(f"  [draft] {preview}")
+                print(f"  [draft]{seen_note} {preview}")
+        else:
+            # Hard signal: no draft output when drafting with existing drafts
+            # Mind is saying "look at what's there"
+            if self.session.is_drafting and self.session.dialogue_pool.drafts:
+                hard_signal = True
+                if self.config.verbose:
+                    print(f"  [SIGNAL] hard stop - {len(self.session.dialogue_pool.drafts)} drafts ready")
 
         # 7. Run incremental clustering on new thoughts (auto-initializes if needed)
         if new_thought_ids:
@@ -217,81 +237,126 @@ class MindRunner:
         return StepResult(
             thoughts_added=thoughts_added,
             draft_added=draft_added,
+            hard_signal=hard_signal,
             skipped=False,
             raw_output=output.raw,
         )
 
-    def run(self, iterations: int) -> list[StepResult]:
+    def run(
+        self,
+        iterations: Optional[int] = None,
+        max_iterations: int = 100,
+        observe: bool = True,
+    ) -> list[StepResult]:
         """
-        Run exactly N iterations.
+        Run iterations with automatic stop detection.
 
         Args:
-            iterations: Number of iterations to run
+            iterations: Exact count to run. If None, run until stop condition.
+            max_iterations: Safety limit when iterations is None.
+            observe: User presence mode.
+                - True: User is watching. Stop on each draft so they see it.
+                - False: User absent. Continuous drafting, only stop on hard signal.
+
+        Stop conditions (when iterations is None):
+            - observe=True: Any draft produced
+            - observe=False: Hard signal only (3+ consecutive no-drafts, OR true silence)
 
         Returns:
             List of StepResults
         """
         results = []
+        limit = iterations if iterations is not None else max_iterations
 
         if self.config.verbose:
-            print(f"Running {iterations} iterations...")
+            if iterations is not None:
+                print(f"Running {iterations} iterations...")
+            else:
+                mode = "observe" if observe else "background"
+                print(f"Running until stop condition ({mode} mode)...")
             print("-" * 40)
 
-        for i in range(iterations):
-            result = self.step()
+        for i in range(limit):
+            result = self._step_inner(observe=observe)
             results.append(result)
 
+            # Check stop conditions (only when running until condition)
+            if iterations is None and self._should_stop(result, results, observe):
+                break
+
+            # Exact count reached
+            if iterations is not None and len(results) >= iterations:
+                break
+
         if self.config.verbose:
-            print("-" * 40)
-            total_thoughts = sum(r.thoughts_added for r in results)
-            total_drafts = sum(1 for r in results if r.draft_added)
-            skipped = sum(1 for r in results if r.skipped)
-            print(f"Completed {iterations} iterations: "
+            self._print_summary(results, iterations, max_iterations)
+
+        return results
+
+    def step(self) -> StepResult:
+        """Single iteration. Equivalent to run(1)[0]."""
+        return self.run(1)[0]
+
+    def _should_stop(self, result: StepResult, results: list[StepResult], observe: bool) -> bool:
+        """
+        Check if we should stop running (for run-until-condition mode).
+
+        Stop conditions depend on observe mode:
+        - observe=True: Any draft produced (user is watching)
+        - observe=False: Hard signal only (user absent, continuous drafting)
+
+        Hard signal triggers:
+        - True silence: no draft AND no thoughts (immediate)
+        - 3+ consecutive no-drafts (confirmed)
+        """
+        # Observe mode: stop on any draft so user sees it
+        if observe and result.draft_added:
+            if self.config.verbose:
+                print("  → stopping: draft produced (observe mode)")
+            return True
+
+        # True silence: no draft AND no thoughts → immediate hard signal
+        if result.hard_signal and result.thoughts_added == 0 and not result.skipped:
+            if self.config.verbose:
+                print("  → stopping: true silence (no draft, no thoughts)")
+            return True
+
+        # Consecutive hard signals (3+) → confirmed stop
+        if result.hard_signal:
+            consecutive = self._count_consecutive_hard_signals(results)
+            if consecutive >= 3:
+                if self.config.verbose:
+                    print(f"  → stopping: {consecutive} consecutive hard signals")
+                return True
+
+        return False
+
+    def _count_consecutive_hard_signals(self, results: list[StepResult]) -> int:
+        """Count consecutive hard signals from the end of results."""
+        count = 0
+        for r in reversed(results):
+            if r.hard_signal:
+                count += 1
+            else:
+                break
+        return count
+
+    def _print_summary(self, results: list[StepResult], iterations: Optional[int], max_iterations: int):
+        """Print run summary."""
+        print("-" * 40)
+        total_thoughts = sum(r.thoughts_added for r in results)
+        total_drafts = sum(1 for r in results if r.draft_added)
+        hard_signals = sum(1 for r in results if r.hard_signal)
+        skipped = sum(1 for r in results if r.skipped)
+
+        if iterations is not None:
+            print(f"Completed {len(results)} iterations: "
                   f"{total_thoughts} thoughts, {total_drafts} drafts, "
                   f"{skipped} skipped")
-
-        return results
-
-    def run_until_draft(self, max_iterations: int = 100) -> list[StepResult]:
-        """
-        Run until a draft is produced.
-
-        This is the natural conversation breakpoint when in drafting state:
-        the mind has produced a response draft for the user to review.
-
-        Only meaningful when is_drafting=True (user message pending).
-        When idle, this will run until max_iterations without a clear endpoint.
-
-        Args:
-            max_iterations: Safety limit to prevent infinite loops
-
-        Returns:
-            List of StepResults (last one will have draft_added=True if successful)
-        """
-        results = []
-
-        if self.config.verbose:
-            if self.session.is_drafting:
-                print("Running until draft response...")
-            else:
-                print("Running (no pending message, will continue until max iterations)...")
-            print("-" * 40)
-
-        for i in range(max_iterations):
-            result = self.step()
-            results.append(result)
-
-            if result.draft_added:
-                if self.config.verbose:
-                    print("-" * 40)
-                    print(f"Draft produced after {len(results)} iterations")
-                break
         else:
-            if self.config.verbose:
-                print("-" * 40)
-                print(f"Max iterations ({max_iterations}) reached without draft")
-
-        return results
+            stop_reason = "draft" if total_drafts > 0 else "hard signal" if hard_signals > 0 else "max reached"
+            print(f"Stopped after {len(results)} iterations ({stop_reason}): "
+                  f"{total_thoughts} thoughts, {total_drafts} drafts")
 
     def _make_clustering_adapter(self):
         """

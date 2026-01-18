@@ -38,8 +38,11 @@ class SessionConfig:
         k_samples: int = 5,  # Thoughts to sample per iteration
         # Pool parameters
         active_pool_size: int = 50,
-        draft_buffer_size: int = 5,
-        history_pairs: int = 10,
+        # Draft display limits (storage is unlimited)
+        draft_display_chars: int = 2000,  # Show drafts up to this many chars
+        draft_display_count: int = 16,  # Show at most this many drafts
+        # History display limit (storage is unlimited)
+        history_display_pairs: int = 10,  # Show at most this many pairs to mind
         # LLM
         model: str = "anthropic/claude-haiku-4.5",
         token_limit: int = 4000,
@@ -52,8 +55,9 @@ class SessionConfig:
     ):
         self.k_samples = k_samples
         self.active_pool_size = active_pool_size
-        self.draft_buffer_size = draft_buffer_size
-        self.history_pairs = history_pairs
+        self.draft_display_chars = draft_display_chars
+        self.draft_display_count = draft_display_count
+        self.history_display_pairs = history_display_pairs
         self.model = model
         self.token_limit = token_limit
         self.embedding_model = embedding_model
@@ -66,8 +70,9 @@ class SessionConfig:
         return {
             'k_samples': self.k_samples,
             'active_pool_size': self.active_pool_size,
-            'draft_buffer_size': self.draft_buffer_size,
-            'history_pairs': self.history_pairs,
+            'draft_display_chars': self.draft_display_chars,
+            'draft_display_count': self.draft_display_count,
+            'history_display_pairs': self.history_display_pairs,
             'model': self.model,
             'token_limit': self.token_limit,
             'embedding_model': self.embedding_model,
@@ -135,8 +140,6 @@ class SessionV2:
         if self._dialogue_pool is None:
             self._dialogue_pool = DialoguePool(
                 pool_dir=self._dialogue_dir,
-                draft_buffer_size=self.config.draft_buffer_size,
-                history_pairs=self.config.history_pairs,
             )
         return self._dialogue_pool
 
@@ -218,9 +221,9 @@ class SessionV2:
         self.iteration += 1
         self.dialogue_pool.send_message(text=text, iter=self.iteration)
 
-    def add_draft(self, text: str) -> None:
+    def add_draft(self, text: str, seen: bool = False) -> None:
         """Mind produces a draft response."""
-        self.dialogue_pool.add_draft(text=text, iter=self.iteration)
+        self.dialogue_pool.add_draft(text=text, iter=self.iteration, seen=seen)
 
     def accept_draft(self, index: int = 1) -> Draft:
         """
@@ -248,13 +251,25 @@ class SessionV2:
         """True if there's a user message awaiting response."""
         return self.dialogue_pool.is_drafting
 
-    def get_drafts(self) -> list[tuple[int, Draft]]:
-        """Get drafts for display (newest first, 1-indexed)."""
-        return self.dialogue_pool.get_drafts_for_display()
+    def get_drafts_for_mind(self) -> list[Draft]:
+        """Get drafts for display to mind (newest first, within limits)."""
+        return self.dialogue_pool.get_drafts_for_display(
+            max_chars=self.config.draft_display_chars,
+            max_count=self.config.draft_display_count,
+        )
+
+    def get_all_drafts(self) -> list[Draft]:
+        """Get all drafts (oldest first) for user display."""
+        return self.dialogue_pool.get_all_drafts()
 
     def get_history(self) -> list[HistoryEntry]:
-        """Get conversation history."""
+        """Get all conversation history (for CLI/analysis)."""
         return self.dialogue_pool.get_history()
+
+    def get_history_for_mind(self) -> list[HistoryEntry]:
+        """Get display-limited history for mind input."""
+        max_entries = self.config.history_display_pairs * 2
+        return self.dialogue_pool.get_history_for_display(max_entries)
 
     # -------------------------------------------------------------------------
     # Clustering compatibility
