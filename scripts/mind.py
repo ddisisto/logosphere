@@ -220,8 +220,11 @@ def cmd_run(args) -> int:
             # Fixed number of iterations
             results = runner.run(iterations=args.iterations)
         else:
-            # Run until stop condition (draft produced or hard signal)
-            results = runner.run(max_iterations=args.max)
+            # Run until stop condition
+            # observe=True (default): stop on each draft
+            # observe=False (--background): only stop on hard signal
+            observe = not args.background
+            results = runner.run(max_iterations=args.max, observe=observe)
         return 0
     except Exception as e:
         print(f"Error: {e}")
@@ -737,9 +740,11 @@ def main():
     # run
     p_run = subparsers.add_parser('run', help='Run until draft (or N iterations)')
     p_run.add_argument('iterations', type=int, nargs='?', default=None,
-                       help='Number of iterations (default: run until draft)')
+                       help='Number of iterations (default: run until stop)')
     p_run.add_argument('--max', type=int, default=100,
-                       help='Max iterations when running until draft (default: 100)')
+                       help='Max iterations safety limit (default: 100)')
+    p_run.add_argument('-b', '--background', action='store_true',
+                       help='Background mode: continuous drafting, only stop on hard signal')
     p_run.add_argument('-q', '--quiet', action='store_true', help='Quiet mode')
 
     # step

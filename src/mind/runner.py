@@ -238,17 +238,25 @@ class MindRunner:
             raw_output=output.raw,
         )
 
-    def run(self, iterations: Optional[int] = None, max_iterations: int = 100) -> list[StepResult]:
+    def run(
+        self,
+        iterations: Optional[int] = None,
+        max_iterations: int = 100,
+        observe: bool = True,
+    ) -> list[StepResult]:
         """
         Run iterations with automatic stop detection.
 
         Args:
             iterations: Exact count to run. If None, run until stop condition.
             max_iterations: Safety limit when iterations is None.
+            observe: User presence mode.
+                - True: User is watching. Stop on each draft so they see it.
+                - False: User absent. Continuous drafting, only stop on hard signal.
 
         Stop conditions (when iterations is None):
-            - First draft produced (when we started with no drafts)
-            - Hard signal confirmed: 3+ consecutive no-drafts, OR true silence (no thoughts AND no draft)
+            - observe=True: Any draft produced
+            - observe=False: Hard signal only (3+ consecutive no-drafts, OR true silence)
 
         Returns:
             List of StepResults
@@ -256,15 +264,12 @@ class MindRunner:
         results = []
         limit = iterations if iterations is not None else max_iterations
 
-        # Track starting state for stop condition logic
-        started_without_drafts = not self.session.dialogue_pool.drafts
-
         if self.config.verbose:
             if iterations is not None:
                 print(f"Running {iterations} iterations...")
             else:
-                state = "awaiting first draft" if started_without_drafts else "continuous"
-                print(f"Running until stop condition ({state})...")
+                mode = "observe" if observe else "background"
+                print(f"Running until stop condition ({mode} mode)...")
             print("-" * 40)
 
         for i in range(limit):
@@ -272,7 +277,7 @@ class MindRunner:
             results.append(result)
 
             # Check stop conditions (only when running until condition)
-            if iterations is None and self._should_stop(result, results, started_without_drafts):
+            if iterations is None and self._should_stop(result, results, observe):
                 break
 
             # Exact count reached
@@ -288,19 +293,22 @@ class MindRunner:
         """Single iteration. Equivalent to run(1)[0]."""
         return self.run(1)[0]
 
-    def _should_stop(self, result: StepResult, results: list[StepResult], started_without_drafts: bool) -> bool:
+    def _should_stop(self, result: StepResult, results: list[StepResult], observe: bool) -> bool:
         """
         Check if we should stop running (for run-until-condition mode).
 
-        Stop conditions:
-        1. First draft produced (when we started with no drafts)
-        2. True silence: no draft AND no thoughts (immediate hard signal)
-        3. Consecutive hard signals: 3+ iterations with no draft
+        Stop conditions depend on observe mode:
+        - observe=True: Any draft produced (user is watching)
+        - observe=False: Hard signal only (user absent, continuous drafting)
+
+        Hard signal triggers:
+        - True silence: no draft AND no thoughts (immediate)
+        - 3+ consecutive no-drafts (confirmed)
         """
-        # First draft when we had none → stop (got something for user)
-        if started_without_drafts and result.draft_added:
+        # Observe mode: stop on any draft so user sees it
+        if observe and result.draft_added:
             if self.config.verbose:
-                print("  → stopping: first draft produced")
+                print("  → stopping: draft produced (observe mode)")
             return True
 
         # True silence: no draft AND no thoughts → immediate hard signal
