@@ -218,10 +218,10 @@ def cmd_run(args) -> int:
     try:
         if args.iterations is not None:
             # Fixed number of iterations
-            results = runner.run(args.iterations)
+            results = runner.run(iterations=args.iterations)
         else:
-            # Default: run until draft produced
-            results = runner.run_until_draft(max_iterations=args.max)
+            # Run until stop condition (draft produced or hard signal)
+            results = runner.run(max_iterations=args.max)
         return 0
     except Exception as e:
         print(f"Error: {e}")
