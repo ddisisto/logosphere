@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.session_v2 import SessionV2, SessionConfig
 from src.core.dialogue_pool import Draft
-from src.mind import MindRunner, MindConfig
+from src.mind import MindRunner, MindConfig, ops
 
 
 # Session tracking file
@@ -58,51 +58,6 @@ def get_current_session_dir() -> Path:
 def set_current_session(path: Path) -> None:
     """Set the current session directory."""
     SESSION_FILE.write_text(str(path.resolve()))
-
-
-# ============================================================================
-# Draft resolution helpers
-# ============================================================================
-
-def resolve_draft_ref(ref: int, drafts: list[Draft]) -> Draft | None:
-    """
-    Resolve a draft reference to a Draft object.
-
-    Args:
-        ref: Either an iteration number (positive) or offset (negative).
-             -1 is latest, -2 is second-latest, etc.
-        drafts: List of drafts (oldest first)
-
-    Returns:
-        The matching Draft or None if not found
-    """
-    if not drafts:
-        return None
-
-    if ref < 0:
-        # Negative offset: -1 is latest, -2 is second-latest
-        idx = len(drafts) + ref
-        if 0 <= idx < len(drafts):
-            return drafts[idx]
-        return None
-    else:
-        # Positive: match by iteration number
-        for draft in drafts:
-            if draft.iter == ref:
-                return draft
-        return None
-
-
-def get_draft_offset(draft: Draft, drafts: list[Draft]) -> int:
-    """
-    Get the negative offset for a draft.
-
-    Returns:
-        Negative offset (-1 for latest, -2 for second-latest, etc.)
-    """
-    # drafts is oldest-first, so latest is at index len-1
-    idx = drafts.index(draft)
-    return idx - len(drafts)  # e.g., for latest: (len-1) - len = -1
 
 
 def truncate_text(text: str, max_lines: int = 8) -> tuple[str, int]:
@@ -272,17 +227,6 @@ def cmd_message(args) -> int:
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
 
-    # Check for pending response
-    if session.is_drafting:
-        all_drafts = session.get_all_drafts()
-        if all_drafts:
-            print(f"Error: Cannot send message while awaiting response ({len(all_drafts)} draft(s) pending).")
-            print("Use 'mind accept' to accept a draft first, or 'mind drafts' to view them.")
-        else:
-            print("Error: Cannot send message while awaiting response.")
-            print("Run 'mind run' to generate a draft, then 'mind accept' to accept it.")
-        return 1
-
     # Determine message text from: positional arg > -f file > stdin
     text = None
 
@@ -301,24 +245,19 @@ def cmd_message(args) -> int:
         print("Usage: mind message \"text\" | mind message -f file.txt | echo \"text\" | mind message")
         return 1
 
-    text = text.strip()
-    if not text:
-        print("Empty message")
-        return 1
-
-    try:
-        session.send_message(text)
-        session.save()
-    except RuntimeError as e:
-        print(f"Error: {e}")
+    result = ops.send_message(session, text or "")
+    if not result.success:
+        print(f"Error: {result.error}")
+        if session.is_drafting and session.get_all_drafts():
+            print("Use 'mind accept' to accept a draft first, or 'mind drafts' to view them.")
         return 1
 
     # Show preview for long messages
-    if len(text) > 80:
-        preview = text[:77] + "..."
-        print(f"Message sent ({len(text)} chars): {preview}")
+    if len(result.text) > 80:
+        preview = result.text[:77] + "..."
+        print(f"Message sent ({len(result.text)} chars): {preview}")
     else:
-        print(f"Message sent: {text}")
+        print(f"Message sent: {result.text}")
 
     return 0
 
@@ -328,42 +267,30 @@ def cmd_accept(args) -> int:
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
 
-    if not session.is_drafting:
-        print("No pending drafts to accept.")
+    result = ops.accept_draft(session, args.ref)
+    if not result.success:
+        print(f"Error: {result.error}")
+        if not session.is_drafting:
+            pass  # Error already explains
+        elif not session.get_all_drafts():
+            print("Run 'mind run' to generate drafts.")
+        else:
+            drafts = session.get_all_drafts()
+            print(f"Or use negative offsets: -1 (latest) to -{len(drafts)} (oldest)")
         return 1
 
-    all_drafts = session.get_all_drafts()
-    if not all_drafts:
-        print("No drafts available. Run 'mind run' to generate drafts.")
-        return 1
+    draft = result.draft
+    drafts = session.get_all_drafts()  # Now empty after accept, but we have the draft
+    # Calculate offset from the draft's position before acceptance
+    # Since draft was accepted, we report based on what the user referenced
+    offset = args.ref if args.ref and args.ref < 0 else -1
 
-    # Default to latest draft
-    if args.ref is None:
-        draft = all_drafts[-1]
-    else:
-        draft = resolve_draft_ref(args.ref, all_drafts)
-        if draft is None:
-            valid_iters = [d.iter for d in all_drafts]
-            print(f"Draft not found for reference {args.ref}.")
-            print(f"Valid iteration numbers: {valid_iters}")
-            print(f"Or use negative offsets: -1 (latest) to -{len(all_drafts)} (oldest)")
-            return 1
-
-    # Accept by the draft's internal index (1-based sequential)
-    try:
-        offset = get_draft_offset(draft, all_drafts)
-        accepted = session.accept_draft(draft.index)
-        session.save()
-
-        print(f"Accepted draft #{accepted.iter} ({offset}):")
-        print("-" * 40)
-        print(accepted.text)
-        print("-" * 40)
-        print("Exchange added to history. Ready for next message.")
-        return 0
-    except Exception as e:
-        print(f"Error: {e}")
-        return 1
+    print(f"Accepted draft #{draft.iter} ({offset}):")
+    print("-" * 40)
+    print(draft.text)
+    print("-" * 40)
+    print("Exchange added to history. Ready for next message.")
+    return 0
 
 
 def cmd_drafts_archive(args, session: SessionV2) -> int:
@@ -448,7 +375,7 @@ def cmd_drafts(args) -> int:
             return 1
 
         ref = int(args.refs[0])
-        draft = resolve_draft_ref(ref, all_drafts)
+        draft = ops.resolve_draft_ref(ref, all_drafts)
         if draft is None:
             valid_iters = [d.iter for d in all_drafts]
             print(f"Draft not found for reference {ref}.")
@@ -456,7 +383,7 @@ def cmd_drafts(args) -> int:
             print(f"Or use negative offsets: -1 (latest) to -{len(all_drafts)} (oldest)")
             return 1
 
-        offset = get_draft_offset(draft, all_drafts)
+        offset = ops.get_draft_offset(draft, all_drafts)
         seen = "[seen]" if draft.seen else "[unseen]"
         print(f"Draft #{draft.iter} ({offset}) {seen}")
         print("-" * 40)
@@ -470,24 +397,14 @@ def cmd_drafts(args) -> int:
             print("No drafts to mark as seen.")
             return 0
 
-        if args.refs:
-            # Mark specific drafts as seen (by iter or offset)
-            marked = []
-            for ref_str in args.refs:
-                ref = int(ref_str)
-                draft = resolve_draft_ref(ref, all_drafts)
-                if draft:
-                    draft.seen = True
-                    marked.append(draft.iter)
-                else:
-                    print(f"Warning: draft not found for reference {ref}")
+        refs = [int(r) for r in args.refs] if args.refs else None
+        count, marked = ops.mark_drafts_seen(session, refs)
+        if refs:
             if marked:
-                session.dialogue_pool.save()
                 print(f"Marked drafts as seen: {marked}")
+            else:
+                print("No matching drafts found.")
         else:
-            # Mark all as seen
-            session.mark_drafts_seen(None)
-            session.save()
             print("Marked all drafts as seen.")
         return 0
 
@@ -511,7 +428,7 @@ def cmd_drafts(args) -> int:
 
     # Show newest first
     for draft in reversed(all_drafts):
-        offset = get_draft_offset(draft, all_drafts)
+        offset = ops.get_draft_offset(draft, all_drafts)
         seen = "[seen]" if draft.seen else "[unseen]"
         print(f"Draft #{draft.iter} ({offset}) {seen}")
         print("\u2500" * 20)  # Unicode box-drawing horizontal line
@@ -536,50 +453,6 @@ def cmd_drafts(args) -> int:
     return 0
 
 
-def resolve_history_ref(ref: int, history: list) -> list:
-    """
-    Resolve a history reference to a list of entries.
-
-    Args:
-        ref: Either an iteration number (positive) or offset (negative).
-             Positive: match single entry by iter number
-             -1: latest single entry (FULL view)
-             -N (N>1): last N entries (truncated view)
-        history: List of history entries (oldest first)
-
-    Returns:
-        List of matching entries (may be empty, single, or multiple)
-    """
-    if not history:
-        return []
-
-    if ref < 0:
-        # Negative: offset from end
-        # -1 means latest entry (single)
-        # -N means last N entries
-        count = abs(ref)
-        if count >= len(history):
-            return list(history)
-        return list(history[-count:])
-    else:
-        # Positive: match by iteration number (single entry)
-        for entry in history:
-            if entry.iter == ref:
-                return [entry]
-        return []
-
-
-def get_history_offset(entry, history: list) -> int:
-    """
-    Get the negative offset for a history entry.
-
-    Returns:
-        Negative offset (-1 for latest, -2 for second-latest, etc.)
-    """
-    idx = history.index(entry)
-    return idx - len(history)  # e.g., for latest: (len-1) - len = -1
-
-
 def cmd_history(args) -> int:
     """Show conversation history."""
     session_dir = get_current_session_dir()
@@ -592,7 +465,7 @@ def cmd_history(args) -> int:
 
     # Determine which entries to show
     if args.ref is not None:
-        entries = resolve_history_ref(args.ref, history)
+        entries = ops.resolve_history_ref(args.ref, history)
         if not entries:
             if args.ref > 0:
                 # Positive ref: looking for specific iter
@@ -611,7 +484,7 @@ def cmd_history(args) -> int:
 
     if is_single:
         entry = entries[0]
-        offset = get_history_offset(entry, history)
+        offset = ops.get_history_offset(entry, history)
         role_label = "user" if entry.role == "user" else "mind"
         print(f"[{role_label}] iter {entry.iter} ({offset})")
         print("-" * 20)
@@ -627,7 +500,7 @@ def cmd_history(args) -> int:
         print()
 
         for entry in entries:
-            offset = get_history_offset(entry, history)
+            offset = ops.get_history_offset(entry, history)
             role_label = "user" if entry.role == "user" else "mind"
             print(f"[{role_label}] iter {entry.iter} ({offset})")
             print("-" * 20)
@@ -739,9 +612,6 @@ def cmd_signal(args) -> int:
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
 
-    # Parse presence shorthand
-    presence_map = {'a': 'absent', 'r': 'reviewing', 'e': 'engaged'}
-
     if args.all:
         # Show all signal history
         print("Signal history:")
@@ -752,19 +622,11 @@ def cmd_signal(args) -> int:
 
     if args.presence or args.status:
         # Update signal
-        presence = None
-        if args.presence:
-            # Handle shorthand
-            p = args.presence.lower()
-            presence = presence_map.get(p, p)
-            if presence not in ('absent', 'reviewing', 'engaged'):
-                print(f"Invalid presence: {args.presence}")
-                print("  Valid: absent (a), reviewing (r), engaged (e)")
-                return 1
-
-        status = args.status
-        signal = session.add_user_signal(presence=presence, status=status)
-        session.save()
+        result = ops.set_signal(session, presence=args.presence, status=args.status)
+        if not result.success:
+            print(f"Error: {result.error}")
+            return 1
+        signal = result.signal
         status_str = f' - "{signal.status}"' if signal.status else ''
         print(f"Signal updated: {signal.presence}{status_str}")
         return 0

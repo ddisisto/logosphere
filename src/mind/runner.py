@@ -20,6 +20,15 @@ from src.core.mind_v2 import (
 from src.logos.clustering import ClusterManager
 
 from .config import MindConfig
+from .events import (
+    EventEmitter,
+    EventType,
+    IterationStartEvent,
+    IterationCompleteEvent,
+    RunStartEvent,
+    RunStopEvent,
+    SignalDetectedEvent,
+)
 
 
 @dataclass
@@ -67,6 +76,9 @@ class MindRunner:
         # Load system prompt
         self.system_prompt = load_system_prompt()
 
+        # Event emitter for TUI/CLI integration
+        self.events = EventEmitter()
+
     def _step_inner(self, observe: bool = True, consecutive_hard_signals: int = 0) -> StepResult:
         """
         Execute single iteration (internal implementation).
@@ -109,8 +121,16 @@ class MindRunner:
                     size = cluster_sizes.get(entry.cluster_id) if entry.cluster_id.startswith('cluster_') else None
                     cluster_assignments[vid] = {'cluster_id': entry.cluster_id, 'size': size}
 
+        state = "drafting" if self.session.is_drafting else "idle"
+
+        # Emit iteration start event
+        self.events.emit(EventType.ITERATION_START, IterationStartEvent(
+            iteration=self.session.iteration,
+            thoughts_sampled=len(thoughts),
+            state=state,
+        ))
+
         if self.config.verbose:
-            state = "drafting" if self.session.is_drafting else "idle"
             print(f"\n[Iteration {self.session.iteration}] "
                   f"Sampled {len(thoughts)} thoughts, state={state}")
 
@@ -255,6 +275,36 @@ class MindRunner:
         self.session.iteration += 1
         self.session.save()
 
+        # Compute totals for event
+        thoughts_chars = sum(len(t) for t in output.thoughts) if output.thoughts else 0
+        draft_length = len(output.draft) if output.draft else None
+
+        # Emit iteration complete event
+        self.events.emit(EventType.ITERATION_COMPLETE, IterationCompleteEvent(
+            iteration=self.session.iteration - 1,  # We just incremented
+            thoughts_added=thoughts_added,
+            thoughts_chars=thoughts_chars,
+            draft_added=draft_added,
+            draft_length=draft_length,
+            draft_text=output.draft,
+            hard_signal=hard_signal,
+            signal_state={
+                'consecutive_hard': consecutive_hard_signals + (1 if hard_signal else 0),
+                'threshold': self.session.config.hard_signal_threshold,
+            },
+            skipped=False,
+        ))
+
+        # Emit signal event if applicable
+        if hard_signal:
+            self.events.emit(EventType.SIGNAL_DETECTED, SignalDetectedEvent(
+                iteration=self.session.iteration - 1,
+                signal_type="hard",
+                consecutive_hard=consecutive_hard_signals + 1,
+                threshold=self.session.config.hard_signal_threshold,
+                message=f"hard stop - {len(self.session.dialogue_pool.drafts)} drafts ready",
+            ))
+
         return StepResult(
             thoughts_added=thoughts_added,
             draft_added=draft_added,
@@ -288,12 +338,19 @@ class MindRunner:
         """
         results = []
         limit = iterations if iterations is not None else max_iterations
+        mode = "observe" if observe else "background"
+
+        # Emit run start event
+        self.events.emit(EventType.RUN_START, RunStartEvent(
+            mode=mode,
+            iterations=iterations,
+            max_iterations=max_iterations,
+        ))
 
         if self.config.verbose:
             if iterations is not None:
                 print(f"Running {iterations} iterations...")
             else:
-                mode = "observe" if observe else "background"
                 print(f"Running until stop condition ({mode} mode)...")
             print("-" * 40)
 
@@ -313,6 +370,29 @@ class MindRunner:
 
         if self.config.verbose:
             self._print_summary(results, iterations, max_iterations)
+
+        # Determine stop reason for event
+        stop_reason = "exact_count"
+        if results:
+            last = results[-1]
+            if iterations is None:
+                # Was running until stop condition
+                if last.draft_added and observe:
+                    stop_reason = "draft"
+                elif last.hard_signal and last.thoughts_added == 0 and not last.skipped:
+                    stop_reason = "true_silence"
+                elif last.hard_signal:
+                    stop_reason = "hard_signal"
+                else:
+                    stop_reason = "max_reached"
+
+        # Emit run stop event
+        self.events.emit(EventType.RUN_STOP, RunStopEvent(
+            reason=stop_reason,
+            iterations_run=len(results),
+            total_thoughts=sum(r.thoughts_added for r in results),
+            total_drafts=sum(1 for r in results if r.draft_added),
+        ))
 
         return results
 
