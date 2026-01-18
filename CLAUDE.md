@@ -141,8 +141,9 @@ Clustering auto-initializes on first iteration - no bootstrap required.
 - Draft-based user ↔ mind communication
 - States: idle (history only) or drafting (awaiting + drafts)
 - User sends message → mind produces drafts → user accepts one
-- Accepted exchanges form conversation history
-- Non-accepted drafts are pruned
+- Accepted exchanges form conversation history (unlimited storage)
+- All drafts stored (unlimited), but mind sees display-limited subset
+- Non-accepted drafts pruned when exchange completes
 
 ### Dialogue Flow
 
@@ -238,8 +239,9 @@ Stable, persistent cluster assignments (see `docs/incremental-clustering-design.
 |-----------|---------|--------|
 | `k_samples` | 5 | Thoughts sampled per iteration |
 | `active_pool_size` | 50 | Size of thinking pool |
-| `draft_buffer_size` | 5 | Drafts retained per exchange |
-| `history_pairs` | 10 | Conversation exchanges to show |
+| `draft_display_chars` | 2000 | Max chars of drafts to show mind |
+| `draft_display_count` | 16 | Max number of drafts to show mind |
+| `history_display_pairs` | 10 | Conversation pairs to show mind |
 | `model` | claude-haiku-4.5 | LLM for mind invocations |
 | `token_limit` | 4000 | Max tokens for LLM response |
 | `min_cluster_size` | 3 | HDBSCAN threshold for new clusters |
@@ -278,8 +280,9 @@ iteration: 247
 config:
   k_samples: 5
   active_pool_size: 50
-  draft_buffer_size: 5
-  history_pairs: 10
+  draft_display_chars: 2000
+  draft_display_count: 16
+  history_display_pairs: 10
   model: anthropic/claude-haiku-4.5
   token_limit: 4000
   embedding_model: openai/text-embedding-3-small

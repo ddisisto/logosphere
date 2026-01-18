@@ -41,7 +41,8 @@ class SessionConfig:
         # Draft display limits (storage is unlimited)
         draft_display_chars: int = 2000,  # Show drafts up to this many chars
         draft_display_count: int = 16,  # Show at most this many drafts
-        history_pairs: int = 10,
+        # History display limit (storage is unlimited)
+        history_display_pairs: int = 10,  # Show at most this many pairs to mind
         # LLM
         model: str = "anthropic/claude-haiku-4.5",
         token_limit: int = 4000,
@@ -56,7 +57,7 @@ class SessionConfig:
         self.active_pool_size = active_pool_size
         self.draft_display_chars = draft_display_chars
         self.draft_display_count = draft_display_count
-        self.history_pairs = history_pairs
+        self.history_display_pairs = history_display_pairs
         self.model = model
         self.token_limit = token_limit
         self.embedding_model = embedding_model
@@ -71,7 +72,7 @@ class SessionConfig:
             'active_pool_size': self.active_pool_size,
             'draft_display_chars': self.draft_display_chars,
             'draft_display_count': self.draft_display_count,
-            'history_pairs': self.history_pairs,
+            'history_display_pairs': self.history_display_pairs,
             'model': self.model,
             'token_limit': self.token_limit,
             'embedding_model': self.embedding_model,
@@ -139,7 +140,6 @@ class SessionV2:
         if self._dialogue_pool is None:
             self._dialogue_pool = DialoguePool(
                 pool_dir=self._dialogue_dir,
-                history_pairs=self.config.history_pairs,
             )
         return self._dialogue_pool
 
@@ -263,8 +263,13 @@ class SessionV2:
         return self.dialogue_pool.get_all_drafts()
 
     def get_history(self) -> list[HistoryEntry]:
-        """Get conversation history."""
+        """Get all conversation history (for CLI/analysis)."""
         return self.dialogue_pool.get_history()
+
+    def get_history_for_mind(self) -> list[HistoryEntry]:
+        """Get display-limited history for mind input."""
+        max_entries = self.config.history_display_pairs * 2
+        return self.dialogue_pool.get_history_for_display(max_entries)
 
     # -------------------------------------------------------------------------
     # Clustering compatibility

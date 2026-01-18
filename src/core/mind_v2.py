@@ -128,6 +128,7 @@ def format_input(
     thoughts: list[Thought],
     dialogue_pool: DialoguePool,
     drafts_for_display: list[Draft],
+    history_for_display: list[HistoryEntry],
     cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id, size}
     user_time: Optional[str] = None,
 ) -> str:
@@ -138,8 +139,9 @@ def format_input(
         mind_id: Identity of this mind (e.g., "mind_0")
         current_iter: Current iteration number
         thoughts: Sampled thoughts from thinking pool
-        dialogue_pool: Dialogue pool with awaiting/drafts/history
+        dialogue_pool: Dialogue pool with awaiting/drafts (history passed separately)
         drafts_for_display: Pre-filtered drafts (newest first, within display limits)
+        history_for_display: Pre-filtered history (oldest first, within display limits)
         cluster_assignments: Optional cluster info per thought {cluster_id, size}
         user_time: Optional timestamp override
 
@@ -167,16 +169,14 @@ def format_input(
     if thought_items:
         thinking_yaml += '\n' + '\n'.join(thought_items)
 
-    # Build dialogue section
-    history = dialogue_pool.get_history()
-
+    # Build dialogue section (use display-limited history)
     if dialogue_pool.is_drafting:
         # Drafting state: show history (if any) + awaiting message + drafts
         dialogue_yaml = 'dialogue:'
 
         # Include history for context
-        if history:
-            history_items = [format_history_entry_yaml(h, current_iter) for h in history]
+        if history_for_display:
+            history_items = [format_history_entry_yaml(h, current_iter) for h in history_for_display]
             dialogue_yaml += '\n  # Conversation history for context\n  history:\n' + '\n'.join(history_items)
 
         # Show awaiting message
@@ -215,8 +215,8 @@ def format_input(
     else:
         # Idle state: show history only
         dialogue_yaml = 'dialogue:\n  # No pending user message. Conversation history for context.'
-        if history:
-            history_items = [format_history_entry_yaml(h, current_iter) for h in history]
+        if history_for_display:
+            history_items = [format_history_entry_yaml(h, current_iter) for h in history_for_display]
             dialogue_yaml += '\n  history:\n' + '\n'.join(history_items)
 
     return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n'

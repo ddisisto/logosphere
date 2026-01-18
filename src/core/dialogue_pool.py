@@ -131,15 +131,13 @@ class DialoguePool:
     def __init__(
         self,
         pool_dir: Path,
-        history_pairs: int = 10,
     ):
         self.pool_dir = Path(pool_dir)
-        self.history_pairs = history_pairs  # Max user+response pairs to retain
 
         # State
         self.awaiting: Optional[UserMessage] = None
         self.drafts: list[Draft] = []  # All drafts, oldest first, never pruned
-        self.history: list[HistoryEntry] = []  # Oldest first
+        self.history: list[HistoryEntry] = []  # Oldest first, never pruned
 
         # Path
         self._pool_path = self.pool_dir / 'pool.yaml'
@@ -259,6 +257,7 @@ class DialoguePool:
             raise IndexError(f"Draft index {index} not found. Valid indices: {valid}")
 
         # Add to history: user message then accepted response (with draft index)
+        # History is never pruned - unlimited storage
         self.history.append(HistoryEntry(
             role='user',
             iter=self.awaiting.iter,
@@ -272,11 +271,6 @@ class DialoguePool:
             text=accepted.text,
             accepted_draft_index=accepted.index,
         ))
-
-        # Trim history (keep last N pairs = 2N entries)
-        max_entries = self.history_pairs * 2
-        if len(self.history) > max_entries:
-            self.history = self.history[-max_entries:]
 
         # Clear drafting state
         self.awaiting = None
@@ -323,8 +317,22 @@ class DialoguePool:
         return list(self.drafts)
 
     def get_history(self) -> list[HistoryEntry]:
-        """Get conversation history (oldest first)."""
+        """Get all conversation history (oldest first)."""
         return list(self.history)
+
+    def get_history_for_display(self, max_entries: int) -> list[HistoryEntry]:
+        """
+        Get history for display to mind, limited to last N entries.
+
+        Args:
+            max_entries: Maximum number of entries to return
+
+        Returns:
+            List of history entries (oldest first within the returned subset)
+        """
+        if len(self.history) <= max_entries:
+            return list(self.history)
+        return list(self.history[-max_entries:])
 
     # -------------------------------------------------------------------------
     # Persistence

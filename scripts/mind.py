@@ -12,10 +12,13 @@ Usage:
     mind message "text"                    # Send message to mind
     mind message -f prompt.md              # Send message from file
     mind accept                            # Accept latest draft
-    mind accept 2                          # Accept specific draft
-    mind drafts                            # Show current drafts
+    mind accept 247                        # Accept draft by iteration number
+    mind accept -2                         # Accept second-latest draft
+    mind drafts                            # Show current drafts (truncated)
+    mind drafts show 247                   # Show full draft by iter
+    mind drafts show -1                    # Show full draft by offset
     mind drafts seen                       # Mark all drafts as seen
-    mind drafts seen 1 3                   # Mark specific drafts as seen
+    mind drafts seen 247 250               # Mark specific drafts as seen (by iter)
     mind history                           # Show conversation history
     mind cluster status                    # Show cluster state
     mind cluster show cluster_0            # Show cluster members
@@ -29,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.session_v2 import SessionV2, SessionConfig
+from src.core.dialogue_pool import Draft
 from src.mind import MindRunner, MindConfig
 
 
@@ -46,6 +50,65 @@ def get_current_session_dir() -> Path:
 def set_current_session(path: Path) -> None:
     """Set the current session directory."""
     SESSION_FILE.write_text(str(path.resolve()))
+
+
+# ============================================================================
+# Draft resolution helpers
+# ============================================================================
+
+def resolve_draft_ref(ref: int, drafts: list[Draft]) -> Draft | None:
+    """
+    Resolve a draft reference to a Draft object.
+
+    Args:
+        ref: Either an iteration number (positive) or offset (negative).
+             -1 is latest, -2 is second-latest, etc.
+        drafts: List of drafts (oldest first)
+
+    Returns:
+        The matching Draft or None if not found
+    """
+    if not drafts:
+        return None
+
+    if ref < 0:
+        # Negative offset: -1 is latest, -2 is second-latest
+        idx = len(drafts) + ref
+        if 0 <= idx < len(drafts):
+            return drafts[idx]
+        return None
+    else:
+        # Positive: match by iteration number
+        for draft in drafts:
+            if draft.iter == ref:
+                return draft
+        return None
+
+
+def get_draft_offset(draft: Draft, drafts: list[Draft]) -> int:
+    """
+    Get the negative offset for a draft.
+
+    Returns:
+        Negative offset (-1 for latest, -2 for second-latest, etc.)
+    """
+    # drafts is oldest-first, so latest is at index len-1
+    idx = drafts.index(draft)
+    return idx - len(drafts)  # e.g., for latest: (len-1) - len = -1
+
+
+def truncate_text(text: str, max_lines: int = 8) -> tuple[str, int]:
+    """
+    Truncate text to max_lines.
+
+    Returns:
+        (truncated_text, remaining_lines) - remaining_lines is 0 if not truncated
+    """
+    lines = text.split('\n')
+    if len(lines) <= max_lines:
+        return text, 0
+    truncated = '\n'.join(lines[:max_lines])
+    return truncated, len(lines) - max_lines
 
 
 # ============================================================================
@@ -235,7 +298,7 @@ def cmd_message(args) -> int:
 
 
 def cmd_accept(args) -> int:
-    """Accept a draft response by absolute index."""
+    """Accept a draft response by iter number or negative offset."""
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
 
@@ -248,26 +311,30 @@ def cmd_accept(args) -> int:
         print("No drafts available. Run 'mind run' to generate drafts.")
         return 1
 
-    # Default to latest draft's index
-    if args.index is None:
-        index = all_drafts[-1].index  # Latest draft
+    # Default to latest draft
+    if args.ref is None:
+        draft = all_drafts[-1]
     else:
-        index = args.index
+        draft = resolve_draft_ref(args.ref, all_drafts)
+        if draft is None:
+            valid_iters = [d.iter for d in all_drafts]
+            print(f"Draft not found for reference {args.ref}.")
+            print(f"Valid iteration numbers: {valid_iters}")
+            print(f"Or use negative offsets: -1 (latest) to -{len(all_drafts)} (oldest)")
+            return 1
 
+    # Accept by the draft's internal index (1-based sequential)
     try:
-        accepted = session.accept_draft(index)
+        offset = get_draft_offset(draft, all_drafts)
+        accepted = session.accept_draft(draft.index)
         session.save()
 
-        print(f"Accepted draft {index}:")
+        print(f"Accepted draft #{accepted.iter} ({offset}):")
         print("-" * 40)
         print(accepted.text)
         print("-" * 40)
         print("Exchange added to history. Ready for next message.")
         return 0
-    except IndexError as e:
-        valid = [d.index for d in all_drafts]
-        print(f"Invalid draft index {index}. Valid indices: {valid}")
-        return 1
     except Exception as e:
         print(f"Error: {e}")
         return 1
@@ -282,50 +349,105 @@ def cmd_drafts(args) -> int:
         print("No pending message. Send a message with 'mind message' first.")
         return 0
 
+    all_drafts = session.get_all_drafts()
+
+    # Handle 'show' subcommand
+    if args.drafts_command == 'show':
+        if not args.refs:
+            print("Usage: mind drafts show <iter|offset>")
+            print("  mind drafts show 247    # Show draft from iteration 247")
+            print("  mind drafts show -1     # Show latest draft")
+            return 1
+
+        if not all_drafts:
+            print("No drafts available.")
+            return 1
+
+        ref = int(args.refs[0])
+        draft = resolve_draft_ref(ref, all_drafts)
+        if draft is None:
+            valid_iters = [d.iter for d in all_drafts]
+            print(f"Draft not found for reference {ref}.")
+            print(f"Valid iteration numbers: {valid_iters}")
+            print(f"Or use negative offsets: -1 (latest) to -{len(all_drafts)} (oldest)")
+            return 1
+
+        offset = get_draft_offset(draft, all_drafts)
+        seen = "[seen]" if draft.seen else "[unseen]"
+        print(f"Draft #{draft.iter} ({offset}) {seen}")
+        print("-" * 40)
+        print(draft.text)
+        print("-" * 40)
+        return 0
+
     # Handle 'seen' subcommand
     if args.drafts_command == 'seen':
-        if args.indices:
-            # Mark specific drafts as seen (by absolute index)
-            indices = [int(i) for i in args.indices]
-            session.mark_drafts_seen(indices)
-            print(f"Marked drafts {indices} as seen.")
+        if not all_drafts:
+            print("No drafts to mark as seen.")
+            return 0
+
+        if args.refs:
+            # Mark specific drafts as seen (by iter or offset)
+            marked = []
+            for ref_str in args.refs:
+                ref = int(ref_str)
+                draft = resolve_draft_ref(ref, all_drafts)
+                if draft:
+                    draft.seen = True
+                    marked.append(draft.iter)
+                else:
+                    print(f"Warning: draft not found for reference {ref}")
+            if marked:
+                session.dialogue_pool.save()
+                print(f"Marked drafts as seen: {marked}")
         else:
             # Mark all as seen
             session.mark_drafts_seen(None)
+            session.save()
             print("Marked all drafts as seen.")
-        session.save()
         return 0
 
-    # Default: show all drafts
+    # Default: show all drafts (truncated)
     awaiting = session.dialogue_pool.awaiting
     print("Awaiting response to:")
     print("-" * 40)
-    print(awaiting.text)
+    # Truncate awaiting message too
+    truncated_awaiting, remaining_awaiting = truncate_text(awaiting.text, max_lines=8)
+    print(truncated_awaiting)
+    if remaining_awaiting > 0:
+        print(f"... ({remaining_awaiting} more lines)")
     print("-" * 40)
 
-    all_drafts = session.get_all_drafts()
     if not all_drafts:
         print("\nNo drafts yet. Run 'mind run' to generate drafts.")
         return 0
 
-    print(f"\nDrafts ({len(all_drafts)} total, oldest first):")
+    print(f"\nDrafts ({len(all_drafts)} total, newest first):")
     print()
 
-    for draft in all_drafts:
-        seen = "[seen]  " if draft.seen else "[unseen]"
-        age = session.iteration - draft.iter
-        print(f"  #{draft.index} {seen} (age: {age})")
+    # Show newest first
+    for draft in reversed(all_drafts):
+        offset = get_draft_offset(draft, all_drafts)
+        seen = "[seen]" if draft.seen else "[unseen]"
+        print(f"Draft #{draft.iter} ({offset}) {seen}")
+        print("\u2500" * 20)  # Unicode box-drawing horizontal line
+
+        # Truncate to max 8 lines
+        truncated, remaining = truncate_text(draft.text, max_lines=8)
         # Show text with indentation
-        for line in draft.text.split('\n'):
-            print(f"     {line}")
+        for line in truncated.split('\n'):
+            print(f"  {line}")
+        if remaining > 0:
+            print(f"  ... ({remaining} more lines)")
         print()
 
     latest = all_drafts[-1]
     print("Commands:")
-    print(f"  mind accept          Accept latest draft (#{latest.index})")
-    print(f"  mind accept N        Accept draft #N")
-    print("  mind drafts seen     Mark all as seen")
-    print("  mind drafts seen N   Mark draft #N as seen")
+    print(f"  mind accept              Accept latest draft (#{latest.iter})")
+    print(f"  mind accept <iter>       Accept draft by iteration number")
+    print(f"  mind accept -N           Accept Nth-from-latest draft")
+    print(f"  mind drafts show <ref>   Show full draft text")
+    print("  mind drafts seen         Mark all as seen")
 
     return 0
 
@@ -493,14 +615,14 @@ def main():
 
     # accept
     p_accept = subparsers.add_parser('accept', help='Accept a draft response')
-    p_accept.add_argument('index', type=int, nargs='?', default=1,
-                          help='Draft index to accept (default: 1=latest)')
+    p_accept.add_argument('ref', type=int, nargs='?', default=None,
+                          help='Draft reference: iter number or negative offset (-1=latest)')
 
     # drafts
     p_drafts = subparsers.add_parser('drafts', help='Show or manage drafts')
-    p_drafts.add_argument('drafts_command', nargs='?', choices=['seen'],
-                          help='Subcommand: seen')
-    p_drafts.add_argument('indices', nargs='*', help='Draft indices to mark as seen')
+    p_drafts.add_argument('drafts_command', nargs='?', choices=['seen', 'show'],
+                          help='Subcommand: seen, show')
+    p_drafts.add_argument('refs', nargs='*', help='Draft references (iter or negative offset)')
 
     # history
     subparsers.add_parser('history', help='Show conversation history')
