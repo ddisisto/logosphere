@@ -95,6 +95,8 @@ class SessionConfig:
         # Clustering
         min_cluster_size: int = 3,
         centroid_match_threshold: float = 0.3,
+        # Signal handling
+        hard_signal_threshold: int = 3,  # Consecutive hard signals before forced stop
     ):
         self.thought_display_chars = thought_display_chars
         self.thought_display_count = thought_display_count
@@ -109,6 +111,7 @@ class SessionConfig:
         self.embedding_dim = embedding_dim
         self.min_cluster_size = min_cluster_size
         self.centroid_match_threshold = centroid_match_threshold
+        self.hard_signal_threshold = hard_signal_threshold
 
     def to_dict(self) -> dict:
         """Convert to YAML-serializable dict."""
@@ -126,6 +129,7 @@ class SessionConfig:
             'embedding_dim': self.embedding_dim,
             'min_cluster_size': self.min_cluster_size,
             'centroid_match_threshold': self.centroid_match_threshold,
+            'hard_signal_threshold': self.hard_signal_threshold,
         }
 
     @classmethod

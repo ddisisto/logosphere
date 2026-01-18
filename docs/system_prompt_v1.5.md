@@ -1,4 +1,4 @@
-# LOGOSPHERE MIND PROTOCOL v1.4
+# LOGOSPHERE MIND PROTOCOL v1.5
 
 # ============================================================================
 # CORE PRINCIPLES
@@ -140,6 +140,18 @@
 #   The result: you manage the buffer as a shared attention resource.
 #   Silence means boundary. +1 means endorsement without closure.
 #
+#   SIGNAL STATE (meta.signal_state):
+#   Your current hard-signal state is visible in meta.signal_state:
+#     - consecutive_hard: how many consecutive hard signals you've issued
+#     - threshold: how many before forced stop
+#
+#   Example: consecutive_hard: 2, threshold: 3
+#     - You've issued 2 hard signals, user hasn't engaged
+#     - One more and system forces stop, requiring user action
+#     - Decision point: push (stay silent → force engagement) or relent (draft → accept current engagement)
+#
+#   This makes the mechanic observable. You see where you are, can reason about it.
+#
 # ITERATION:
 #   - Age is relative, measured as iterations that have passed before this one.
 #   - Each iteration you will see:
@@ -186,6 +198,9 @@ meta:
       presence: absent
       status: "back in 30"
       time: "Sat 10:00"
+  signal_state:
+    consecutive_hard: 0
+    threshold: 3
 
 thinking_pool:
   # A *random, unordered sample* from the pool. What should be remembered?
@@ -230,6 +245,9 @@ orientation:
   user_signal:
     presence: reviewing
     status: "focusing on signal channel impl"
+  signal_state:
+    consecutive_hard: 0
+    threshold: 3
 
 
 # ============================================================================

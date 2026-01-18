@@ -67,12 +67,13 @@ class MindRunner:
         # Load system prompt
         self.system_prompt = load_system_prompt()
 
-    def _step_inner(self, observe: bool = True) -> StepResult:
+    def _step_inner(self, observe: bool = True, consecutive_hard_signals: int = 0) -> StepResult:
         """
         Execute single iteration (internal implementation).
 
         Args:
             observe: User presence mode. If True, drafts are marked as seen immediately.
+            consecutive_hard_signals: Count of consecutive hard signals from previous iterations.
 
         Raises:
             RuntimeError: If not in drafting state (no awaiting message)
@@ -128,7 +129,13 @@ class MindRunner:
             'drafts': {'chars': cfg.draft_display_chars, 'count': cfg.draft_display_count},
         }
 
-        # 6. Format YAML input with dialogue pool (v1.3 format)
+        # 6. Build signal state for mind context (v1.5)
+        signal_state = {
+            'consecutive_hard': consecutive_hard_signals,
+            'threshold': cfg.hard_signal_threshold,
+        }
+
+        # 7. Format YAML input with dialogue pool (v1.5 format)
         user_input = format_input(
             mind_id=self.config.mind_id,
             current_iter=self.session.iteration,
@@ -139,6 +146,7 @@ class MindRunner:
             cluster_assignments=cluster_assignments,
             limits=limits,
             user_signals=user_signals,
+            signal_state=signal_state,
         )
 
         if self.config.debug:
@@ -290,7 +298,9 @@ class MindRunner:
             print("-" * 40)
 
         for i in range(limit):
-            result = self._step_inner(observe=observe)
+            # Compute consecutive hard signals from previous results
+            consecutive = self._count_consecutive_hard_signals(results)
+            result = self._step_inner(observe=observe, consecutive_hard_signals=consecutive)
             results.append(result)
 
             # Check stop conditions (only when running until condition)
@@ -320,8 +330,10 @@ class MindRunner:
 
         Hard signal triggers:
         - True silence: no draft AND no thoughts (immediate)
-        - 3+ consecutive no-drafts (confirmed)
+        - N+ consecutive no-drafts (N = hard_signal_threshold from config)
         """
+        threshold = self.session.config.hard_signal_threshold
+
         # Observe mode: stop on any draft so user sees it
         if observe and result.draft_added:
             if self.config.verbose:
@@ -334,12 +346,12 @@ class MindRunner:
                 print("  → stopping: true silence (no draft, no thoughts)")
             return True
 
-        # Consecutive hard signals (3+) → confirmed stop
+        # Consecutive hard signals (threshold+) → confirmed stop
         if result.hard_signal:
             consecutive = self._count_consecutive_hard_signals(results)
-            if consecutive >= 3:
+            if consecutive >= threshold:
                 if self.config.verbose:
-                    print(f"  → stopping: {consecutive} consecutive hard signals")
+                    print(f"  → stopping: {consecutive} consecutive hard signals (threshold: {threshold})")
                 return True
 
         return False

@@ -27,8 +27,8 @@ from .session_v2 import UserSignal
 # ============================================================================
 
 def load_system_prompt() -> str:
-    """Load system prompt from docs/system_prompt_v1.4.md."""
-    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.4.md'
+    """Load system prompt from docs/system_prompt_v1.5.md."""
+    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.5.md'
     if prompt_path.exists():
         return prompt_path.read_text()
     raise FileNotFoundError(f"System prompt not found at {prompt_path}")
@@ -135,9 +135,10 @@ def format_input(
     user_time: Optional[str] = None,
     limits: Optional[dict] = None,  # {thoughts: {chars, count}, history: {...}, drafts: {...}}
     user_signals: Optional[list[UserSignal]] = None,  # Recent signals, newest first
+    signal_state: Optional[dict] = None,  # {consecutive_hard, threshold}
 ) -> str:
     """
-    Format input for Mind invocation (v1.3 protocol).
+    Format input for Mind invocation (v1.5 protocol).
 
     Args:
         mind_id: Identity of this mind (e.g., "mind_0")
@@ -150,9 +151,10 @@ def format_input(
         user_time: Optional timestamp override
         limits: Optional display limits to show in meta section
         user_signals: Optional user signals (newest first) for meta and orientation
+        signal_state: Optional signal state {consecutive_hard, threshold} for meta and orientation
 
     Returns:
-        YAML string for Mind input (v1.3: meta, thoughts, dialogue, drafts, orientation)
+        YAML string for Mind input (v1.5: meta, thoughts, dialogue, drafts, orientation)
     """
     if user_time is None:
         user_time = datetime.now(timezone.utc).isoformat()
@@ -179,6 +181,12 @@ def format_input(
     - age: {age}
       presence: {sig.presence}{status_str}
       time: "{sig.time}"'''
+
+    if signal_state:
+        meta_yaml += f'''
+  signal_state:
+    consecutive_hard: {signal_state['consecutive_hard']}
+    threshold: {signal_state['threshold']}'''
 
     # Build thinking pool with custom comment format
     thought_items = []
@@ -232,7 +240,7 @@ drafts:
 drafts:
 ''' + '\n'.join(draft_items)
 
-        # Build orientation footer (v1.3) with latest user signal
+        # Build orientation footer (v1.5) with latest user signal and signal state
         orientation_yaml = f'''# Re-orientation after long context
 orientation:
   iter: {current_iter}'''
@@ -242,6 +250,11 @@ orientation:
             orientation_yaml += f'''
   user_signal:
     presence: {latest.presence}{status_str}'''
+        if signal_state:
+            orientation_yaml += f'''
+  signal_state:
+    consecutive_hard: {signal_state['consecutive_hard']}
+    threshold: {signal_state['threshold']}'''
 
         return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n\n{drafts_yaml}\n{orientation_yaml}\n'
 
@@ -370,7 +383,7 @@ def invoke_mind(
     Invoke Mind with YAML input/output.
 
     Args:
-        system_prompt: Protocol spec (from docs/system_prompt_v1.4.md)
+        system_prompt: Protocol spec (from docs/system_prompt_v1.5.md)
         user_input: Formatted YAML input
         model: Model to use
         token_limit: Max tokens for response

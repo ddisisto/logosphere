@@ -26,7 +26,7 @@ logosphere/
 │   │   ├── thinking_pool.py   # Embedded thoughts with FIFO rotation
 │   │   ├── dialogue_pool.py   # Draft-based dialogue (awaiting/drafts/history)
 │   │   ├── session_v2.py      # Dual-pool session management
-│   │   ├── mind_v2.py         # YAML-based LLM invocation (v1.3 protocol)
+│   │   ├── mind_v2.py         # YAML-based LLM invocation (v1.5 protocol)
 │   │   ├── embedding_client.py # OpenRouter embedding API
 │   │   └── intervention_log.py # Append-only audit trail
 │   ├── mind/
@@ -46,7 +46,7 @@ logosphere/
 │   ├── logos.py               # Legacy CLI (v1)
 │   └── extract_session.py     # Session extraction/forking utility
 └── docs/
-    ├── system_prompt_v1.4.md  # Current Mind protocol spec
+    ├── system_prompt_v1.5.md  # Current Mind protocol spec
     ├── draft-dialogue-design.md # Draft dialogue design doc
     └── ...                    # Other design docs
 ```
@@ -195,7 +195,7 @@ A session is a directory containing:
 
 Sessions are linear (no branching). Fork sessions by copying with `extract_session.py`.
 
-### Mind Protocol (v1.3)
+### Mind Protocol (v1.5)
 
 YAML-based input/output format. Block order: meta → thinking_pool → dialogue → drafts → orientation.
 
@@ -209,6 +209,9 @@ meta:
     thoughts: {chars: 3000, count: 10}
     history: {chars: 4000, count: 20}
     drafts: {chars: 2000, count: 16}
+  signal_state:
+    consecutive_hard: 0
+    threshold: 3
 
 thinking_pool:
   - |  # age: 50, cluster: {id: 3, size: 8}
@@ -241,6 +244,9 @@ drafts:
 # Re-orientation after long context
 orientation:
   iter: 247
+  signal_state:
+    consecutive_hard: 0
+    threshold: 3
 ```
 
 **Output:**
@@ -290,6 +296,7 @@ All inputs to the mind use a consistent `{resource}_display_chars` + `{resource}
 | `token_limit` | 4000 | Max tokens for LLM response |
 | `min_cluster_size` | 3 | HDBSCAN threshold for new clusters |
 | `centroid_match_threshold` | 0.3 | Max cosine distance for cluster matching |
+| `hard_signal_threshold` | 3 | Consecutive hard signals before forced stop |
 
 ---
 
@@ -335,6 +342,7 @@ config:
   embedding_dim: 1536
   min_cluster_size: 3
   centroid_match_threshold: 0.3
+  hard_signal_threshold: 3
 ```
 
 ### dialogue/pool.yaml
