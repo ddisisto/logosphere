@@ -81,17 +81,17 @@ mind status                            # Show current state
 ### Running Iterations
 
 ```bash
-mind run                               # Run until stop condition (observe mode)
-mind run --background                  # Continuous mode: stop on hard signal only
+mind run                               # Run until stop (observe mode, max 100)
+mind run -b                            # Background: drafts unseen, stop on hard signal only
 mind run 10                            # Run exactly 10 iterations
-mind run --max 50                      # Safety limit for run-until-stop
+mind run -b 10                         # Background: 10 iterations, drafts unseen
 mind step                              # Single iteration
 mind step --debug                      # Dump full LLM request/response
 ```
 
-**Stop conditions:**
-- Observe mode (default): stops on each draft
-- Background mode (`-b`): stops on hard signal only (3+ consecutive no-drafts, or true silence)
+**Modes:**
+- Observe (default): drafts marked seen, stops on each draft
+- Background (`-b`): drafts unseen, stops on hard signal only (3+ consecutive no-drafts, or true silence)
 
 ### Dialogue
 

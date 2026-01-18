@@ -215,16 +215,31 @@ def cmd_run(args) -> int:
 
     runner = MindRunner(session, config)
 
+    # -b flag controls observe mode (user presence)
+    # observe=True: user watching, mark drafts seen, stop on each draft
+    # observe=False: user away, don't mark seen, only stop on hard signal
+    observe = not args.background
+
     try:
         if args.iterations is not None:
             # Fixed number of iterations
-            results = runner.run(iterations=args.iterations)
+            results = runner.run(iterations=args.iterations, observe=observe)
         else:
-            # Run until stop condition
-            # observe=True (default): stop on each draft
-            # observe=False (--background): only stop on hard signal
-            observe = not args.background
-            results = runner.run(max_iterations=args.max, observe=observe)
+            # Run until stop condition (default max: 100)
+            results = runner.run(max_iterations=100, observe=observe)
+
+        # Show stop reason for run-until-stop mode
+        if args.iterations is None and results and not args.quiet:
+            last = results[-1]
+            if last.draft_added:
+                print("Stop reason: draft produced")
+            elif last.hard_signal and last.thoughts_added == 0:
+                print("Stop reason: true silence")
+            elif last.hard_signal:
+                print("Stop reason: hard signal (consecutive no-drafts)")
+            else:
+                print("Stop reason: max iterations reached")
+
         return 0
     except Exception as e:
         print(f"Error: {e}")
@@ -738,13 +753,11 @@ def main():
     subparsers.add_parser('status', help='Show session status')
 
     # run
-    p_run = subparsers.add_parser('run', help='Run until draft (or N iterations)')
+    p_run = subparsers.add_parser('run', help='Run until stop (or N iterations)')
     p_run.add_argument('iterations', type=int, nargs='?', default=None,
-                       help='Number of iterations (default: run until stop)')
-    p_run.add_argument('--max', type=int, default=100,
-                       help='Max iterations safety limit (default: 100)')
+                       help='Number of iterations (default: run until stop, max 100)')
     p_run.add_argument('-b', '--background', action='store_true',
-                       help='Background mode: continuous drafting, only stop on hard signal')
+                       help='Background mode: user away, drafts unseen, stop on hard signal only')
     p_run.add_argument('-q', '--quiet', action='store_true', help='Quiet mode')
 
     # step
