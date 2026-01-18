@@ -1,8 +1,8 @@
 # RFC: Draft Signal Channel Enhancement
 
-**Status**: In Progress (partial implementation)
-**Date**: 2026-01-17
-**Branch**: `draft-dialogue`
+**Status**: Complete (core implementation done)
+**Date**: 2026-01-18
+**Branch**: `draft-signal-channel`
 
 ## Summary
 
@@ -52,24 +52,18 @@ Drafts have permanent indices within each exchange:
 
 **Implementation status**: ✅ Done (from earlier)
 
-## Design Decisions (Pending Implementation)
+## Design Decisions (Implemented)
 
-### 4. Signal Vocabulary
+### 4. Minimal Signal Vocabulary
 
-The mind can use short ALL-CAPS words as signals embedded in drafts:
+Two signals only - one hard, one soft:
 
-| Signal | Meaning |
-|--------|---------|
-| `THINK` | Need more internal processing, don't accept yet |
-| `CLUSTER X+Y` | Thinking pool clusters X and Y are relevant |
-| `EXIT` | Ready to conclude this exchange |
-| `RETURN` | Coming back to an earlier point |
-| `USER` | Addressing user directly |
-| `[name]` | User's first name if known |
+| Signal | Meaning | Cost |
+|--------|---------|------|
+| (no draft) | **HARD**: User attention required NOW | 0 chars |
+| `+1` | **SOFT**: Latest draft is publishable, still iterating | 2 chars |
 
-These serve dual purpose:
-- Signal to **future iterations** of self
-- Signal to **user** about how to interpret buffer content
+**Implementation status**: ✅ Done - added to system_prompt_v1.2.md
 
 ### 5. Opt-Out as Hard Signal
 
@@ -84,17 +78,18 @@ If the top/latest draft is correct and complete:
 - User *must* pay attention
 - This is integrated signal channel behavior
 
-### 6. Buffer Cycling with Short Drafts
+**Implementation status**: ✅ Done - documented in SIGNAL CHANNEL section
 
-Short drafts cycle the display buffer quickly:
-- `SKIP` - 4 chars
-- `SHIP IT` - 7 chars
-- `GO` - 2 chars
-- `SEND` - 4 chars
-- `BLOCK` - 5 chars
-- `REJECT` - 6 chars
+### 6. Buffer Dynamics
 
-These move the buffer in small increments, potentially pushing older long drafts out of the display window while keeping them in storage.
+The `+1` signal creates self-limiting behavior:
+- Too many `+1`s push real content off display window
+- If best draft at risk of being lost: regenerate it fresh
+- When best == only visible real draft: revert to hard signal (silence)
+
+Mind learns to manage buffer visibility as a shared attention resource.
+
+**Implementation status**: ✅ Done - documented in system prompt
 
 ### 7. User Presence Detection (Future)
 
@@ -108,18 +103,17 @@ When user is absent:
 
 ## Implementation Remaining
 
-### Immediate (this session, partially done)
+### Immediate (this session) - COMPLETE
 
 1. ~~Update config params~~ ✅
 2. ~~DialoguePool: unlimited storage, absolute indices~~ ✅
 3. ~~session_v2: new draft methods~~ ✅
 4. ~~format_input: display limits~~ ✅
 5. ~~CLI: absolute index accept~~ ✅
-6. Update system prompt with:
-   - Signal vocabulary
-   - Opt-out semantics
-   - Buffer cycling concept
-7. Update CLAUDE.md
+6. ~~System prompt: signal vocabulary, opt-out, buffer dynamics~~ ✅
+7. ~~CLAUDE.md~~ ✅
+8. ~~Draft archive (append-only JSONL)~~ ✅
+9. ~~History CLI standardization~~ ✅
 
 ### Next Session
 

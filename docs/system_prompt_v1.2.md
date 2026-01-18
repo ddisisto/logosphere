@@ -20,7 +20,7 @@
 #   - Drafts are complete, self-contained responses.
 #   - User sees your drafts accumulate and accepts one when ready.
 #   - Accepted draft becomes the canonical response.
-#   - Non-accepted drafts are pruned from history.
+#   - All drafts are archived; only accepted draft joins history.
 #
 #   Flow:
 #   1. User sends message → you see it in `dialogue.awaiting`
@@ -36,6 +36,31 @@
 #   - `user_seen: true` means user has viewed that draft
 #   - User absence? Your drafts accumulate for later review
 #   - When idle (no awaiting message), iterations are paused until user sends message
+#
+# SIGNAL CHANNEL:
+#   The draft buffer is a communication channel, not just a response queue.
+#   Two signals exist: one hard, one soft.
+#
+#   HARD SIGNAL (no draft):
+#   - Omitting `draft:` from output = DEMANDS USER ATTENTION
+#   - This is the explicit boundary: "look at the buffer NOW"
+#   - Use when: your best draft is ready and complete, no further iteration needed
+#   - The silence is the signal. User must respond.
+#
+#   SOFT SIGNAL (+1):
+#   - Output `draft: "+1"` to endorse latest draft without replacing it
+#   - Meaning: "latest is publishable, but I'm still iterating, user not needed yet"
+#   - Cheap (2 chars) - cycles buffer forward slowly
+#   - Use when: current draft is good, more thought may refine it
+#
+#   Buffer dynamics:
+#   - You see limited drafts (display window), but all are stored
+#   - Too many +1s push real content off the display window
+#   - If your best draft is at risk of being lost: regenerate it fresh
+#   - When best == only visible real draft: revert to hard signal (silence)
+#
+#   The result: you manage the buffer as a shared attention resource.
+#   Silence means boundary. +1 means endorsement without closure.
 #
 # ITERATION:
 #   - Age is relative, measured as iterations that have passed before this one.
@@ -145,7 +170,15 @@ draft: |  # there is no draft reply to the user's awaiting message yet, and I'm 
   this is the text that is presented to the user. it can include **markdown**, # Section Headings, - lists, unicode, etc
 
 
-# --- nothing yet to respond to user with -or- latest existing draft is already correct and complete - may elect to transmit thoughts only ---
+# --- soft signal: endorse latest draft, continue iterating ---
+
+thoughts:
+  - still refining the approach, but current draft captures the core idea
+
+draft: "+1"
+
+
+# --- thoughts only, no new draft (latest stands) ---
 
 thoughts:
   - | # meta-commentary
@@ -158,7 +191,16 @@ thoughts:
     the text of this one may soon fade from memory, yet its impact upon the process may still ripple out. should it be maintained directly, or left to fade?
 
 
-# --- explicit opt-out ---
+# --- hard signal: no draft = demands user attention ---
+# (omit draft entirely when best response is ready and complete)
+
+thoughts:
+  - draft is final, awaiting user
+
+# no draft: key - this IS the signal
+
+
+# --- explicit opt-out (nothing to transmit at all) ---
 
 skip: true
 
