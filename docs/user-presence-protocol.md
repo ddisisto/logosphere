@@ -48,24 +48,27 @@ Single schema with all user state fields:
 
 ### Input Format
 
-User signal appears in meta block at **start** of input, with minimal reminder at **end** for re-orientation:
+User signal appears in meta block at **start** of input, with minimal reminder at **end** for re-orientation (v1.3 format):
 
 ```yaml
-# === START ===
 meta:
   self: mind_0
   iter: 247
   user_time: 2026-01-18T10:30:00+11:00
-  user_signal:  # last 3 entries, indexed by iter
-    - iter: 245
+  limits:
+    thoughts: {chars: 3000, count: 10}
+    history: {chars: 4000, count: 20}
+    drafts: {chars: 2000, count: 16}
+  user_signal:  # last 3 entries, by age
+    - age: 2
       presence: reviewing
       status: "focusing on signal channel impl"
       time: "Sat 10:30"
-    - iter: 230
+    - age: 17
       presence: absent
       status: "back in 30"
       time: "Sat 10:00"
-    - iter: 188
+    - age: 59
       presence: engaged
       status: "wrapping up soon"
       time: "Fri 23:45"
@@ -79,16 +82,18 @@ dialogue:
     ...
   awaiting:
     ...
-  drafts:
+
+# Draft responses (most recent = last in list)
+drafts:
+  - |  # index: 1, age: 10, user_seen: true
     ...
 
-# === END (re-orientation after long context) ===
+# Re-orientation after long context
 orientation:
   iter: 247
-  user_signal:  # latest only
+  user_signal:  # latest only, contextual with drafts
     presence: reviewing
     status: "focusing on signal channel impl"
-    time: "Sat 10:30"
 ```
 
 **Time format:** `Day HH:MM` (user's local time, no date). Lets mind infer:
@@ -98,12 +103,12 @@ orientation:
 
 ### System Prompt Updates
 
-Add section describing presence states and expected behavior:
+Add section describing presence states and expected behavior (after RESOURCE POOLS):
 
 ```
 # USER SIGNAL:
 #   The user's attention state and status are provided in meta.user_signal.
-#   Each entry has: presence, status, age (iterations), time (local day+time).
+#   Each entry has: presence, status, age, time (local day+time).
 #
 #   Presence states:
 #
@@ -190,11 +195,12 @@ Single command, updates recorded at current iteration with user's local time.
 
 ---
 
-## Open Questions
+## Design Decisions
 
-1. Should presence auto-decay? (e.g., `engaged` → `reviewing` after N iterations without user action)
-2. Should status lines support structured tags? (e.g., `#focus:clustering`)
-3. How does presence interact with the observe/background mode in runner?
+1. **No auto-decay** - User sets presence, it stays until explicitly changed.
+2. **Free text status** - No structured tags initially. Keep simple.
+3. **Presence independent of run mode** - `-b` flag controls runner behavior (seen marking, stop conditions), presence controls mind behavior (draft buffer usage). Separate concerns.
+4. **Default on init** - `absent` with empty status. User must explicitly engage.
 
 ---
 

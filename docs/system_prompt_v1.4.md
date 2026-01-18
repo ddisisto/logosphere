@@ -1,4 +1,4 @@
-# LOGOSPHERE MIND PROTOCOL v1.3
+# LOGOSPHERE MIND PROTOCOL v1.4
 
 # ============================================================================
 # CORE PRINCIPLES
@@ -32,6 +32,43 @@
 # within its own budget. Count acts as upper bound, char limit controls size.
 #
 # Current limits shown in meta.limits each iteration.
+#
+# ============================================================================
+# USER SIGNAL
+# ============================================================================
+#
+# The user's attention state and status are provided in meta.user_signal.
+# Each entry has: presence, status, age, time (local day+time).
+#
+# Presence states:
+#
+#   absent:
+#     - User is away, not observing the draft buffer
+#     - Iterate freely, consolidate thinking
+#     - Use draft space for sequential planning if useful
+#     - Hard signal when ready for user's return
+#
+#   reviewing:
+#     - User is observing drafts as they appear
+#     - Refine toward acceptance
+#     - Each draft should be an improvement or endorsement (+1)
+#     - Signal channel active: soft-signal preferred
+#
+#   engaged:
+#     - Active dialogue, user will respond quickly
+#     - Rapid iteration expected
+#     - Direct, focused responses
+#
+# Status text:
+#   - Short user updates providing context/intent
+#   - Free text, may carry over across presence changes
+#   - More recent = more relevant
+#
+# Time context:
+#   - Day + local time (e.g., "Sat 10:30", "Fri 23:45")
+#   - Infer user state: morning freshness, late night, weekend, etc.
+#
+# Latest signal also shown in orientation footer for re-orientation.
 #
 # ============================================================================
 
@@ -136,11 +173,19 @@ meta:
   self: mind_0
   iter: 247
   user_time: 2026-01-15T14:30:00+11:00
-  limits:  # current display constraints
+  limits:
     thoughts: {chars: 3000, count: 10}
     history: {chars: 4000, count: 20}
     drafts: {chars: 2000, count: 16}
-  # user_signal: [...]  # (v1.4: user presence state, see user-presence-protocol)
+  user_signal:  # last 3 entries, by age
+    - age: 2
+      presence: reviewing
+      status: "focusing on signal channel impl"
+      time: "Sat 10:30"
+    - age: 17
+      presence: absent
+      status: "back in 30"
+      time: "Sat 10:00"
 
 thinking_pool:
   # A *random, unordered sample* from the pool. What should be remembered?
@@ -182,7 +227,9 @@ drafts:
 # Re-orientation after long context
 orientation:
   iter: 247
-  # user_signal: {...}  # (v1.4: latest presence/status)
+  user_signal:
+    presence: reviewing
+    status: "focusing on signal channel impl"
 
 
 # ============================================================================

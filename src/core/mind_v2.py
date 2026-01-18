@@ -1,10 +1,11 @@
 """
 Mind v2 - YAML-based Mind invocation for Logosphere v2.
 
-Implements the LOGOSPHERE MIND PROTOCOL v1.2:
-- YAML input format (meta + thinking_pool + dialogue)
+Implements the LOGOSPHERE MIND PROTOCOL v1.3:
+- YAML input format (meta + thinking_pool + dialogue + drafts + orientation)
 - Custom comment-based metadata for thoughts
 - YAML output parsing (thoughts + draft)
+- User signal support (presence + status)
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import yaml
 
 from .thinking_pool import Thought
 from .dialogue_pool import DialoguePool, Draft, HistoryEntry, UserMessage
+from .session_v2 import UserSignal
 
 
 # ============================================================================
@@ -25,8 +27,8 @@ from .dialogue_pool import DialoguePool, Draft, HistoryEntry, UserMessage
 # ============================================================================
 
 def load_system_prompt() -> str:
-    """Load system prompt from docs/system_prompt_v1.3.md."""
-    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.3.md'
+    """Load system prompt from docs/system_prompt_v1.4.md."""
+    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.4.md'
     if prompt_path.exists():
         return prompt_path.read_text()
     raise FileNotFoundError(f"System prompt not found at {prompt_path}")
@@ -132,6 +134,7 @@ def format_input(
     cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id, size}
     user_time: Optional[str] = None,
     limits: Optional[dict] = None,  # {thoughts: {chars, count}, history: {...}, drafts: {...}}
+    user_signals: Optional[list[UserSignal]] = None,  # Recent signals, newest first
 ) -> str:
     """
     Format input for Mind invocation (v1.3 protocol).
@@ -146,6 +149,7 @@ def format_input(
         cluster_assignments: Optional cluster info per thought {cluster_id, size}
         user_time: Optional timestamp override
         limits: Optional display limits to show in meta section
+        user_signals: Optional user signals (newest first) for meta and orientation
 
     Returns:
         YAML string for Mind input (v1.3: meta, thoughts, dialogue, drafts, orientation)
@@ -153,7 +157,7 @@ def format_input(
     if user_time is None:
         user_time = datetime.now(timezone.utc).isoformat()
 
-    # Build meta section with limits
+    # Build meta section with limits and user signal
     meta_yaml = f'''meta:
   self: {mind_id}
   iter: {current_iter}
@@ -165,6 +169,16 @@ def format_input(
     thoughts: {{chars: {limits['thoughts']['chars']}, count: {limits['thoughts']['count']}}}
     history: {{chars: {limits['history']['chars']}, count: {limits['history']['count']}}}
     drafts: {{chars: {limits['drafts']['chars']}, count: {limits['drafts']['count']}}}'''
+
+    if user_signals:
+        meta_yaml += '\n  user_signal:  # last entries, by age'
+        for sig in user_signals:
+            age = current_iter - sig.iter
+            status_str = f'\n      status: "{sig.status}"' if sig.status else ''
+            meta_yaml += f'''
+    - age: {age}
+      presence: {sig.presence}{status_str}
+      time: "{sig.time}"'''
 
     # Build thinking pool with custom comment format
     thought_items = []
@@ -218,10 +232,16 @@ drafts:
 drafts:
 ''' + '\n'.join(draft_items)
 
-        # Build orientation footer (v1.3)
+        # Build orientation footer (v1.3) with latest user signal
         orientation_yaml = f'''# Re-orientation after long context
 orientation:
   iter: {current_iter}'''
+        if user_signals:
+            latest = user_signals[0]  # newest first
+            status_str = f'\n    status: "{latest.status}"' if latest.status else ''
+            orientation_yaml += f'''
+  user_signal:
+    presence: {latest.presence}{status_str}'''
 
         return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n\n{drafts_yaml}\n{orientation_yaml}\n'
 
@@ -350,7 +370,7 @@ def invoke_mind(
     Invoke Mind with YAML input/output.
 
     Args:
-        system_prompt: Protocol spec (from docs/system_prompt_v1.3.md)
+        system_prompt: Protocol spec (from docs/system_prompt_v1.4.md)
         user_input: Formatted YAML input
         model: Model to use
         token_limit: Max tokens for response

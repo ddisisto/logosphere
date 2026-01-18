@@ -25,6 +25,11 @@ Usage:
     mind history -1                        # Show latest entry (full view)
     mind cluster status                    # Show cluster state
     mind cluster show cluster_0            # Show cluster members
+    mind signal                            # Show current signal
+    mind signal -a                         # Show all signal history
+    mind signal -p reviewing               # Set presence (a/r/e shortcuts)
+    mind signal -s "focusing on X"         # Set status text
+    mind signal -p e -s "deep work"        # Set both
 """
 
 import argparse
@@ -729,6 +734,51 @@ def cmd_config(args) -> int:
     return 0
 
 
+def cmd_signal(args) -> int:
+    """Show or update user signal (presence/status)."""
+    session_dir = get_current_session_dir()
+    session = SessionV2(session_dir)
+
+    # Parse presence shorthand
+    presence_map = {'a': 'absent', 'r': 'reviewing', 'e': 'engaged'}
+
+    if args.all:
+        # Show all signal history
+        print("Signal history:")
+        for sig in session.user_signal:
+            status_str = f' - "{sig.status}"' if sig.status else ''
+            print(f"  iter {sig.iter}: {sig.presence}{status_str} ({sig.time})")
+        return 0
+
+    if args.presence or args.status:
+        # Update signal
+        presence = None
+        if args.presence:
+            # Handle shorthand
+            p = args.presence.lower()
+            presence = presence_map.get(p, p)
+            if presence not in ('absent', 'reviewing', 'engaged'):
+                print(f"Invalid presence: {args.presence}")
+                print("  Valid: absent (a), reviewing (r), engaged (e)")
+                return 1
+
+        status = args.status
+        signal = session.add_user_signal(presence=presence, status=status)
+        session.save()
+        status_str = f' - "{signal.status}"' if signal.status else ''
+        print(f"Signal updated: {signal.presence}{status_str}")
+        return 0
+
+    # Show current signal
+    sig = session.get_latest_signal()
+    age = session.iteration - sig.iter
+    status_str = f'\n  status: "{sig.status}"' if sig.status else ''
+    print(f"Current signal (age {age}):")
+    print(f"  presence: {sig.presence}{status_str}")
+    print(f"  time: {sig.time}")
+    return 0
+
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -797,6 +847,15 @@ def main():
                           help='Set config values')
     p_config.add_argument('--json', action='store_true', help='Output as JSON')
 
+    # signal
+    p_signal = subparsers.add_parser('signal', help='Show/update user signal')
+    p_signal.add_argument('-p', '--presence', metavar='STATE',
+                          help='Set presence: absent (a), reviewing (r), engaged (e)')
+    p_signal.add_argument('-s', '--status', metavar='TEXT',
+                          help='Set status text')
+    p_signal.add_argument('-a', '--all', action='store_true',
+                          help='Show all signal history')
+
     args = parser.parse_args()
 
     if not args.command:
@@ -815,6 +874,7 @@ def main():
         'history': cmd_history,
         'cluster': cmd_cluster,
         'config': cmd_config,
+        'signal': cmd_signal,
     }
 
     try:

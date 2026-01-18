@@ -46,7 +46,7 @@ logosphere/
 │   ├── logos.py               # Legacy CLI (v1)
 │   └── extract_session.py     # Session extraction/forking utility
 └── docs/
-    ├── system_prompt_v1.3.md  # Current Mind protocol spec
+    ├── system_prompt_v1.4.md  # Current Mind protocol spec
     ├── draft-dialogue-design.md # Draft dialogue design doc
     └── ...                    # Other design docs
 ```
@@ -130,6 +130,18 @@ mind cluster show cluster_0            # Show members of a cluster
 ```
 
 Clustering auto-initializes on first iteration - no bootstrap required.
+
+### User Signal
+
+```bash
+mind signal                            # Show current signal
+mind signal -a                         # Show all signal history
+mind signal -p reviewing               # Set presence (a/r/e shortcuts)
+mind signal -s "focusing on X"         # Set status text
+mind signal -p e -s "deep work"        # Set both presence and status
+```
+
+Presence states: `absent` (a), `reviewing` (r), `engaged` (e). Default on init: `absent`.
 
 ---
 
