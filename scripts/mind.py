@@ -19,7 +19,10 @@ Usage:
     mind drafts show -1                    # Show full draft by offset
     mind drafts seen                       # Mark all drafts as seen
     mind drafts seen 247 250               # Mark specific drafts as seen (by iter)
-    mind history                           # Show conversation history
+    mind history                           # Show all history (truncated)
+    mind history -5                        # Show last 5 entries (truncated)
+    mind history 247                       # Show entry by iter (full view)
+    mind history -1                        # Show latest entry (full view)
     mind cluster status                    # Show cluster state
     mind cluster show cluster_0            # Show cluster members
 """
@@ -510,6 +513,50 @@ def cmd_drafts(args) -> int:
     return 0
 
 
+def resolve_history_ref(ref: int, history: list) -> list:
+    """
+    Resolve a history reference to a list of entries.
+
+    Args:
+        ref: Either an iteration number (positive) or offset (negative).
+             Positive: match single entry by iter number
+             -1: latest single entry (FULL view)
+             -N (N>1): last N entries (truncated view)
+        history: List of history entries (oldest first)
+
+    Returns:
+        List of matching entries (may be empty, single, or multiple)
+    """
+    if not history:
+        return []
+
+    if ref < 0:
+        # Negative: offset from end
+        # -1 means latest entry (single)
+        # -N means last N entries
+        count = abs(ref)
+        if count >= len(history):
+            return list(history)
+        return list(history[-count:])
+    else:
+        # Positive: match by iteration number (single entry)
+        for entry in history:
+            if entry.iter == ref:
+                return [entry]
+        return []
+
+
+def get_history_offset(entry, history: list) -> int:
+    """
+    Get the negative offset for a history entry.
+
+    Returns:
+        Negative offset (-1 for latest, -2 for second-latest, etc.)
+    """
+    idx = history.index(entry)
+    return idx - len(history)  # e.g., for latest: (len-1) - len = -1
+
+
 def cmd_history(args) -> int:
     """Show conversation history."""
     session_dir = get_current_session_dir()
@@ -520,23 +567,56 @@ def cmd_history(args) -> int:
         print("No conversation history yet.")
         return 0
 
-    print(f"Conversation history ({len(history) // 2} exchanges):")
-    print("=" * 60)
+    # Determine which entries to show
+    if args.ref is not None:
+        entries = resolve_history_ref(args.ref, history)
+        if not entries:
+            if args.ref > 0:
+                # Positive ref: looking for specific iter
+                valid_iters = [e.iter for e in history]
+                print(f"History entry not found for iteration {args.ref}.")
+                print(f"Valid iteration numbers: {valid_iters}")
+            else:
+                print(f"No entries found for reference {args.ref}.")
+            return 1
+    else:
+        # Default: show all
+        entries = list(history)
 
-    current_exchange = 0
-    for i, entry in enumerate(history):
-        if entry.role == "user":
-            current_exchange += 1
-            print(f"\n[Exchange {current_exchange}]")
-            print(f"User (age: {session.iteration - entry.iter}):")
-        else:
-            print(f"\nMind (age: {session.iteration - entry.iter}):")
+    # Single vs multiple: single entry shows FULL text, multiple truncates
+    is_single = len(entries) == 1
 
-        # Show text with indentation
+    if is_single:
+        entry = entries[0]
+        offset = get_history_offset(entry, history)
+        role_label = "user" if entry.role == "user" else "mind"
+        print(f"[{role_label}] iter {entry.iter} ({offset})")
+        print("-" * 20)
+        # Full view for single entry
         for line in entry.text.split('\n'):
             print(f"  {line}")
+        print("-" * 20)
+    else:
+        # Multiple entries: truncated view
+        total_exchanges = len(history) // 2
+        shown_count = len(entries)
+        print(f"History ({shown_count} entries, {total_exchanges} exchanges total):")
+        print()
 
-    print("\n" + "=" * 60)
+        for entry in entries:
+            offset = get_history_offset(entry, history)
+            role_label = "user" if entry.role == "user" else "mind"
+            print(f"[{role_label}] iter {entry.iter} ({offset})")
+            print("-" * 20)
+
+            # Truncate to max 8 lines
+            truncated, remaining = truncate_text(entry.text, max_lines=8)
+            for line in truncated.split('\n'):
+                print(f"  {line}")
+            if remaining > 0:
+                print(f"  ... ({remaining} more lines)")
+            print()
+
     return 0
 
 
@@ -683,7 +763,9 @@ def main():
     p_drafts.add_argument('refs', nargs='*', help='Draft references (iter or negative offset) or exchange_id for archive')
 
     # history
-    subparsers.add_parser('history', help='Show conversation history')
+    p_history = subparsers.add_parser('history', help='Show conversation history')
+    p_history.add_argument('ref', type=int, nargs='?', default=None,
+                           help='History entry ref: iter number or negative offset (-N=last N entries, -1=latest single entry)')
 
     # cluster
     p_cluster = subparsers.add_parser('cluster', help='Cluster management')
