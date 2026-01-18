@@ -4,9 +4,9 @@
 
 **INSIDE THE EXPERIMENT:**
 - Thoughts in the thinking pool
-- Messages in the message pool
-- Mind inputs (sampled thoughts + messages + system prompt)
-- Mind outputs (thoughts + messages)
+- Dialogue state (awaiting message, drafts, history)
+- Mind inputs (sampled thoughts + dialogue state + system prompt)
+- Mind outputs (thoughts + draft)
 
 **OUTSIDE THE EXPERIMENT:**
 - Runner (sampler, parser, embedder)
@@ -24,9 +24,9 @@ logosphere/
 ├── src/
 │   ├── core/
 │   │   ├── thinking_pool.py   # Embedded thoughts with FIFO rotation
-│   │   ├── message_pool.py    # Direct communication (per-source FIFO)
+│   │   ├── dialogue_pool.py   # Draft-based dialogue (awaiting/drafts/history)
 │   │   ├── session_v2.py      # Dual-pool session management
-│   │   ├── mind_v2.py         # YAML-based LLM invocation
+│   │   ├── mind_v2.py         # YAML-based LLM invocation (v1.2 protocol)
 │   │   ├── embedding_client.py # OpenRouter embedding API
 │   │   └── intervention_log.py # Append-only audit trail
 │   ├── mind/
@@ -46,8 +46,8 @@ logosphere/
 │   ├── logos.py               # Legacy CLI (v1)
 │   └── extract_session.py     # Session extraction/forking utility
 └── docs/
-    ├── system_prompt_v1.1.md  # Current Mind protocol spec
-    ├── draft-dialogue-design.md # Proposed draft-based dialogue
+    ├── system_prompt_v1.2.md  # Current Mind protocol spec
+    ├── draft-dialogue-design.md # Draft dialogue design doc
     └── ...                    # Other design docs
 ```
 
@@ -81,21 +81,30 @@ mind status                            # Show current state
 ### Running Iterations
 
 ```bash
-mind run                               # Run until message emitted (default)
+mind run                               # Run until draft produced (default)
 mind run 10                            # Run exactly 10 iterations
-mind run --max 50                      # Safety limit for run-until-message
+mind run --max 50                      # Safety limit for run-until-draft
 mind step                              # Single iteration
 mind step --debug                      # Dump full LLM request/response
 ```
 
-### Messaging
+### Dialogue
 
 ```bash
-mind message "hello"                   # Send message to mind
+mind message "hello"                   # Send message to mind (starts drafting)
 mind message -f prompt.md              # Send from file
 cat prompt.md | mind message           # Send via pipe
-mind message --to mind_1 "hello"       # Send to specific mind (default: mind_0)
+mind drafts                            # Show current drafts (newest first)
+mind drafts seen                       # Mark all drafts as seen
+mind drafts seen 1 3                   # Mark specific drafts as seen
+mind accept                            # Accept latest draft
+mind accept 2                          # Accept specific draft
+mind history                           # Show conversation history
 ```
+
+Notes:
+- Cannot send a new message while awaiting response. Must accept a draft first.
+- Cannot run iterations while idle. Must send a message first.
 
 ### Configuration
 
@@ -128,28 +137,42 @@ Clustering auto-initializes on first iteration - no bootstrap required.
 - FIFO rotation: oldest thoughts displaced when pool is full
 - Minds see: text + age + cluster assignment
 
-**Message Pool** (`messages/`)
-- Direct user ↔ mind communication
-- Per-source FIFO buffers (user's messages separate from mind's)
-- Messages include: source, recipient, age, timestamp
-- No embeddings or clustering
+**Dialogue Pool** (`dialogue/`)
+- Draft-based user ↔ mind communication
+- States: idle (history only) or drafting (awaiting + drafts)
+- User sends message → mind produces drafts → user accepts one
+- Accepted exchanges form conversation history
+- Non-accepted drafts are pruned
+
+### Dialogue Flow
+
+```
+1. User sends message       → state becomes DRAFTING, iterations enabled
+2. Mind iterations produce drafts (0 or more per iteration)
+3. User marks drafts as seen (optional)
+4. User accepts one draft   → state becomes IDLE, iterations blocked
+5. Exchange added to history
+6. Repeat from step 1
+```
+
+Strict mode: iterations only run during drafting state. When idle, user must send a message to continue.
 
 ### Session
 
 A session is a directory containing:
 - `session.yaml` - Iteration counter and config
 - `thinking/` - Thought embeddings and pool state
-- `messages/` - Message pool state
+- `dialogue/` - Dialogue pool state (awaiting/drafts/history)
 - `clusters/` - Cluster registry and assignments
 - `interventions.jsonl` - Audit log of all actions
 
 Sessions are linear (no branching). Fork sessions by copying with `extract_session.py`.
 
-### Mind Protocol (v1.1)
+### Mind Protocol (v1.2)
 
 YAML-based input/output format.
 
-**Input:**
+**Input (drafting state with history):**
 ```yaml
 meta:
   self: mind_0
@@ -162,13 +185,25 @@ thinking_pool:
   - |  # age: 12, cluster: {~}
     noise thought (no cluster yet)
 
-message_pool:
-  - source: user
-    to: mind_0
+dialogue:
+  history:
+    - from: user
+      age: 200
+      text: |
+        previous user message
+    - from: self
+      age: 195
+      text: |
+        accepted response
+  awaiting:
     age: 42
-    time: 2026-01-15T12:31:19+11:00
     text: |
-      user's message
+      user's message awaiting response
+  drafts:
+    - |  # age: 38, user_seen: true
+      first draft response
+    - |  # age: 15, user_seen: false
+      latest draft response
 ```
 
 **Output:**
@@ -179,13 +214,12 @@ thoughts:
     multi-line thought using
     YAML block format
 
-messages:
-  - to: user
-    text: |
-      response to user
+draft: |
+  response to user's message
+  (complete and self-contained)
 ```
 
-Optional outputs: `thoughts: []`, `messages: []`, or `skip: true` for silence.
+Optional outputs: `thoughts: []`, no `draft:`, or `skip: true` for silence.
 
 ### Incremental Clustering
 
@@ -204,7 +238,8 @@ Stable, persistent cluster assignments (see `docs/incremental-clustering-design.
 |-----------|---------|--------|
 | `k_samples` | 5 | Thoughts sampled per iteration |
 | `active_pool_size` | 50 | Size of thinking pool |
-| `message_buffer_per_source` | 10 | Messages retained per source |
+| `draft_buffer_size` | 5 | Drafts retained per exchange |
+| `history_pairs` | 10 | Conversation exchanges to show |
 | `model` | claude-haiku-4.5 | LLM for mind invocations |
 | `token_limit` | 4000 | Max tokens for LLM response |
 | `min_cluster_size` | 3 | HDBSCAN threshold for new clusters |
@@ -215,18 +250,21 @@ Stable, persistent cluster assignments (see `docs/incremental-clustering-design.
 ## Design Principles
 
 ### 1. Experimental Purity
-Thoughts/messages contain only content. Minds see relative age, not absolute time.
+Thoughts/drafts contain only content. Minds see relative age, not absolute time.
 
 ### 2. Dual-Pool Separation
-Thinking (internal, clustered, sampled) vs messaging (external, direct, complete).
+Thinking (internal, clustered, sampled) vs dialogue (external, draft-based, sequential).
 
-### 3. Statefulness in Pools Only
+### 3. Draft-Based Refinement
+Mind can refine responses over multiple iterations before user accepts.
+
+### 4. Statefulness in Pools Only
 Minds are stateless. The pools are the collective memory.
 
-### 4. Non-destructive Exploration
+### 5. Non-destructive Exploration
 Fork sessions to explore "what if" without losing state.
 
-### 5. Observable Dynamics
+### 6. Observable Dynamics
 Every action logged. Cluster evolution trackable.
 
 ---
@@ -240,7 +278,8 @@ iteration: 247
 config:
   k_samples: 5
   active_pool_size: 50
-  message_buffer_per_source: 10
+  draft_buffer_size: 5
+  history_pairs: 10
   model: anthropic/claude-haiku-4.5
   token_limit: 4000
   embedding_model: openai/text-embedding-3-small
@@ -249,11 +288,31 @@ config:
   centroid_match_threshold: 0.3
 ```
 
-### interventions.jsonl
+### dialogue/pool.yaml
 
-```json
-{"type": "message", "content": {"source": "user", "text": "..."}, ...}
-{"type": "run", "content": {"iterations": 10}, ...}
+```yaml
+awaiting:
+  iter: 245
+  time: 2026-01-15T14:30:00+00:00
+  text: |
+    user's message
+drafts:
+  - iter: 246
+    time: 2026-01-15T14:31:00+00:00
+    text: |
+      draft response
+    seen: true
+history:
+  - role: user
+    iter: 100
+    time: 2026-01-15T10:00:00+00:00
+    text: |
+      earlier message
+  - role: mind
+    iter: 105
+    time: 2026-01-15T10:05:00+00:00
+    text: |
+      earlier response
 ```
 
 ---
@@ -273,11 +332,6 @@ Design docs should include "Update CLAUDE.md" as a final implementation step.
 
 ## Future Directions
 
-**Draft-Based Dialogue** (see `docs/draft-dialogue-design.md`):
-- Mind produces draft responses, user accepts one
-- Asynchronous refinement loop
-- Non-accepted drafts pruned from history
-
 **Clustering:**
 - Cluster splitting when coherence drops
 - Cluster shape metrics (aspect ratio, dimensionality)
@@ -285,10 +339,15 @@ Design docs should include "Update CLAUDE.md" as a final implementation step.
 
 **Analysis:**
 - Diversity metrics over time
-- Message impact analysis
+- Draft evolution analysis
 - Cluster trajectory visualization
 
 **Experiments:**
 - Different models on same session
 - Multi-mind sessions
-- Message lineage tracking
+- Thought lineage tracking
+
+**Dialogue enhancements:**
+- Threading (branching conversations)
+- Draft annotations (confidence, "still working")
+- Auto-accept after N iterations without new draft

@@ -1,8 +1,9 @@
 """
-Logos - Pool-based reasoning with session infrastructure.
+Logos - Clustering and analysis tools.
+
+Legacy runner (LogosRunner) has been replaced by mind.MindRunner.
 """
 
 from .config import LogosConfig
-from .runner import LogosRunner
 
-__all__ = ["LogosConfig", "LogosRunner"]
+__all__ = ["LogosConfig"]

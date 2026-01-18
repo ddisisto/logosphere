@@ -205,16 +205,26 @@ When no user message is pending:
 
 ## Implementation Notes
 
+### Design Decisions
+
+- **Clean replacement**: No legacy/deprecated code paths. Delete or replace `MessagePool` entirely.
+- **System prompt**: New `system_prompt_v1.2.md` (not modifying v1.1)
+- **Output schema**: Hard switch to `draft:` field (not `messages:`)
+- **One-to-one enforcement**: Strict - CLI error if user tries `mind message` while drafts pending
+
 ### Data structures
 
-- `DraftPool` or extend existing `MessagePool` with draft semantics
+- `DialoguePool` replacing `MessagePool`
 - Track: `awaiting` (user message), `drafts` (rolling buffer), `history` (accepted pairs)
-- `seen` flag per item, updated by user client
+- `seen` flag per draft, updated via explicit CLI command
 
 ### CLI changes
 
+- `mind message "text"` - send message (error if drafts pending, must accept first)
 - `mind accept [draft_num]` - accept a draft (default: latest)
-- `mind drafts` - show current draft buffer
+- `mind drafts` - show current drafts (newest first: 1=latest, 2=previous, ...)
+- `mind drafts seen` - mark all drafts as seen
+- `mind drafts seen 1 3` - mark specific drafts as seen
 - `mind history` - show accepted conversation history
 
 ### Config
@@ -235,14 +245,16 @@ When no user message is pending:
 
 ## Implementation Checklist
 
-When implementing this design:
+Implementation completed 2026-01-17:
 
-1. [ ] Create `DraftPool` or extend `MessagePool` with draft semantics
-2. [ ] Update `format_input()` to produce new dialogue schema
-3. [ ] Update Mind parser for draft output
-4. [ ] Add CLI commands: `mind accept`, `mind drafts`, `mind history`
-5. [ ] Add config params: `draft_buffer_size`, `history_pairs`
-6. [ ] Update system prompt with dialogue section
-7. [ ] **Update CLAUDE.md** - reflect new architecture, CLI commands, and concepts
+1. [x] Create `DialoguePool` (replacing `MessagePool`)
+2. [x] Update `SessionV2` to use `DialoguePool`
+3. [x] Create `system_prompt_v1.2.md` with dialogue section
+4. [x] Update `format_input()` to produce new dialogue schema
+5. [x] Update Mind parser for `draft:` output (replacing `messages:`)
+6. [x] Update CLI: `mind message` (with pending-draft guard), `mind accept`, `mind drafts`, `mind history`
+7. [x] Add config params: `draft_buffer_size`, `history_pairs`
+8. [x] Delete `MessagePool` and related code
+9. [x] **Update CLAUDE.md** - reflect new architecture, CLI commands, and concepts
 
 The final step is critical: CLAUDE.md should always reflect the current state of the implementation. After any significant architectural change, review and update it to prevent documentation drift.

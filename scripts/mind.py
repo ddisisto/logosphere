@@ -7,10 +7,16 @@ Usage:
     mind open ./session                    # Open existing session
     mind status                            # Show current session state
     mind run 10                            # Run N iterations
+    mind run                               # Run until draft produced
     mind step                              # Single iteration
     mind message "text"                    # Send message to mind
     mind message -f prompt.md              # Send message from file
-    cat prompt.md | mind message           # Send message via pipe
+    mind accept                            # Accept latest draft
+    mind accept 2                          # Accept specific draft
+    mind drafts                            # Show current drafts
+    mind drafts seen                       # Mark all drafts as seen
+    mind drafts seen 1 3                   # Mark specific drafts as seen
+    mind history                           # Show conversation history
     mind cluster status                    # Show cluster state
     mind cluster show cluster_0            # Show cluster members
 """
@@ -84,7 +90,14 @@ def cmd_open(args) -> int:
     print(f"Opened session at {session_dir}")
     print(f"  Iteration: {session.iteration}")
     print(f"  Thoughts: {session.thinking_pool.size()}")
-    print(f"  Messages: {session.message_pool.size()}")
+
+    # Show dialogue state
+    if session.is_drafting:
+        drafts = session.get_drafts()
+        print(f"  State: drafting ({len(drafts)} drafts)")
+    else:
+        history = session.get_history()
+        print(f"  State: idle ({len(history) // 2} exchanges in history)")
 
     return 0
 
@@ -97,16 +110,30 @@ def cmd_status(args) -> int:
     print(f"Session: {session_dir}")
     print(f"  Iteration: {session.iteration}")
     print(f"  Thoughts: {session.thinking_pool.size()} (active: {session.thinking_pool.active_size()})")
-    print(f"  Messages: {session.message_pool.size()}")
     print(f"  Model: {session.config.model}")
 
-    # Show recent messages
-    messages = session.get_messages()
-    if messages:
-        print("\nRecent messages:")
-        for msg in messages[-5:]:
-            preview = msg.text[:60] + "..." if len(msg.text) > 60 else msg.text
-            print(f"  [{msg.source} → {msg.to}] {preview}")
+    # Show dialogue state
+    if session.is_drafting:
+        awaiting = session.dialogue_pool.awaiting
+        drafts = session.get_drafts()
+        print(f"\nAwaiting response:")
+        preview = awaiting.text[:60] + "..." if len(awaiting.text) > 60 else awaiting.text
+        print(f"  {preview}")
+        print(f"\nDrafts: {len(drafts)}")
+        if drafts:
+            idx, latest = drafts[0]
+            preview = latest.text[:60] + "..." if len(latest.text) > 60 else latest.text
+            seen = "seen" if latest.seen else "unseen"
+            print(f"  [1] ({seen}) {preview}")
+    else:
+        history = session.get_history()
+        print(f"\nState: idle ({len(history) // 2} exchanges in history)")
+        if history:
+            print("\nRecent history:")
+            for entry in history[-4:]:
+                role = "You" if entry.role == "user" else "Mind"
+                preview = entry.text[:50] + "..." if len(entry.text) > 50 else entry.text
+                print(f"  [{role}] {preview}")
 
     return 0
 
@@ -127,8 +154,8 @@ def cmd_run(args) -> int:
             # Fixed number of iterations
             results = runner.run(args.iterations)
         else:
-            # Default: run until message emitted
-            results = runner.run_until_message(max_iterations=args.max)
+            # Default: run until draft produced
+            results = runner.run_until_draft(max_iterations=args.max)
         return 0
     except Exception as e:
         print(f"Error: {e}")
@@ -153,6 +180,20 @@ def cmd_step(args) -> int:
 
 def cmd_message(args) -> int:
     """Send a message to the mind."""
+    session_dir = get_current_session_dir()
+    session = SessionV2(session_dir)
+
+    # Check for pending response
+    if session.is_drafting:
+        drafts = session.get_drafts()
+        if drafts:
+            print(f"Error: Cannot send message while awaiting response ({len(drafts)} draft(s) pending).")
+            print("Use 'mind accept' to accept a draft first, or 'mind drafts' to view them.")
+        else:
+            print("Error: Cannot send message while awaiting response.")
+            print("Run 'mind run' to generate a draft, then 'mind accept' to accept it.")
+        return 1
+
     # Determine message text from: positional arg > -f file > stdin
     text = None
 
@@ -176,23 +217,140 @@ def cmd_message(args) -> int:
         print("Empty message")
         return 1
 
-    session_dir = get_current_session_dir()
-    session = SessionV2(session_dir)
-
-    session.add_message(
-        source='user',
-        to=args.to,
-        text=text,
-    )
-    session.save()
+    try:
+        session.send_message(text)
+        session.save()
+    except RuntimeError as e:
+        print(f"Error: {e}")
+        return 1
 
     # Show preview for long messages
     if len(text) > 80:
         preview = text[:77] + "..."
-        print(f"Message sent to {args.to} ({len(text)} chars): {preview}")
+        print(f"Message sent ({len(text)} chars): {preview}")
     else:
-        print(f"Message sent to {args.to}: {text}")
+        print(f"Message sent: {text}")
 
+    return 0
+
+
+def cmd_accept(args) -> int:
+    """Accept a draft response."""
+    session_dir = get_current_session_dir()
+    session = SessionV2(session_dir)
+
+    if not session.is_drafting:
+        print("No pending drafts to accept.")
+        return 1
+
+    drafts = session.get_drafts()
+    if not drafts:
+        print("No drafts available. Run 'mind run' to generate drafts.")
+        return 1
+
+    # Parse index (1-based, 1=latest)
+    index = args.index if args.index else 1
+
+    if not (1 <= index <= len(drafts)):
+        print(f"Invalid draft index {index}. Valid range: 1-{len(drafts)}")
+        return 1
+
+    try:
+        accepted = session.accept_draft(index)
+        session.save()
+
+        print(f"Accepted draft {index}:")
+        print("-" * 40)
+        print(accepted.text)
+        print("-" * 40)
+        print("Exchange added to history. Ready for next message.")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def cmd_drafts(args) -> int:
+    """Show or manage drafts."""
+    session_dir = get_current_session_dir()
+    session = SessionV2(session_dir)
+
+    if not session.is_drafting:
+        print("No pending message. Send a message with 'mind message' first.")
+        return 0
+
+    # Handle 'seen' subcommand
+    if args.drafts_command == 'seen':
+        if args.indices:
+            # Mark specific drafts as seen
+            indices = [int(i) for i in args.indices]
+            session.mark_drafts_seen(indices)
+            print(f"Marked drafts {indices} as seen.")
+        else:
+            # Mark all as seen
+            session.mark_drafts_seen(None)
+            print("Marked all drafts as seen.")
+        session.save()
+        return 0
+
+    # Default: show drafts
+    awaiting = session.dialogue_pool.awaiting
+    print("Awaiting response to:")
+    print("-" * 40)
+    print(awaiting.text)
+    print("-" * 40)
+
+    drafts = session.get_drafts()
+    if not drafts:
+        print("\nNo drafts yet. Run 'mind run' to generate drafts.")
+        return 0
+
+    print(f"\nDrafts ({len(drafts)} total, newest first):")
+    print()
+
+    for idx, draft in drafts:
+        seen = "[seen]  " if draft.seen else "[unseen]"
+        print(f"  {idx}. {seen} (age: {session.iteration - draft.iter})")
+        # Show text with indentation
+        for line in draft.text.split('\n'):
+            print(f"     {line}")
+        print()
+
+    print("Commands:")
+    print("  mind accept [N]      Accept draft N (default: 1=latest)")
+    print("  mind drafts seen     Mark all as seen")
+    print("  mind drafts seen N   Mark draft N as seen")
+
+    return 0
+
+
+def cmd_history(args) -> int:
+    """Show conversation history."""
+    session_dir = get_current_session_dir()
+    session = SessionV2(session_dir)
+
+    history = session.get_history()
+    if not history:
+        print("No conversation history yet.")
+        return 0
+
+    print(f"Conversation history ({len(history) // 2} exchanges):")
+    print("=" * 60)
+
+    current_exchange = 0
+    for i, entry in enumerate(history):
+        if entry.role == "user":
+            current_exchange += 1
+            print(f"\n[Exchange {current_exchange}]")
+            print(f"User (age: {session.iteration - entry.iter}):")
+        else:
+            print(f"\nMind (age: {session.iteration - entry.iter}):")
+
+        # Show text with indentation
+        for line in entry.text.split('\n'):
+            print(f"  {line}")
+
+    print("\n" + "=" * 60)
     return 0
 
 
@@ -311,11 +469,11 @@ def main():
     subparsers.add_parser('status', help='Show session status')
 
     # run
-    p_run = subparsers.add_parser('run', help='Run until message (or N iterations)')
+    p_run = subparsers.add_parser('run', help='Run until draft (or N iterations)')
     p_run.add_argument('iterations', type=int, nargs='?', default=None,
-                       help='Number of iterations (default: run until message)')
+                       help='Number of iterations (default: run until draft)')
     p_run.add_argument('--max', type=int, default=100,
-                       help='Max iterations when running until message (default: 100)')
+                       help='Max iterations when running until draft (default: 100)')
     p_run.add_argument('-q', '--quiet', action='store_true', help='Quiet mode')
 
     # step
@@ -326,7 +484,20 @@ def main():
     p_msg = subparsers.add_parser('message', help='Send message to mind')
     p_msg.add_argument('text', nargs='?', help='Message text (or use -f or pipe)')
     p_msg.add_argument('-f', '--file', help='Read message from file')
-    p_msg.add_argument('--to', default='mind_0', help='Recipient (default: mind_0)')
+
+    # accept
+    p_accept = subparsers.add_parser('accept', help='Accept a draft response')
+    p_accept.add_argument('index', type=int, nargs='?', default=1,
+                          help='Draft index to accept (default: 1=latest)')
+
+    # drafts
+    p_drafts = subparsers.add_parser('drafts', help='Show or manage drafts')
+    p_drafts.add_argument('drafts_command', nargs='?', choices=['seen'],
+                          help='Subcommand: seen')
+    p_drafts.add_argument('indices', nargs='*', help='Draft indices to mark as seen')
+
+    # history
+    subparsers.add_parser('history', help='Show conversation history')
 
     # cluster
     p_cluster = subparsers.add_parser('cluster', help='Cluster management')
@@ -353,6 +524,9 @@ def main():
         'run': cmd_run,
         'step': cmd_step,
         'message': cmd_message,
+        'accept': cmd_accept,
+        'drafts': cmd_drafts,
+        'history': cmd_history,
         'cluster': cmd_cluster,
         'config': cmd_config,
     }

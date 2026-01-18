@@ -1,10 +1,10 @@
 """
 Mind v2 - YAML-based Mind invocation for Logosphere v2.
 
-Implements the LOGOSPHERE MIND PROTOCOL v1.1:
-- YAML input format (meta + thinking_pool + message_pool)
+Implements the LOGOSPHERE MIND PROTOCOL v1.2:
+- YAML input format (meta + thinking_pool + dialogue)
 - Custom comment-based metadata for thoughts
-- YAML output parsing (thoughts + messages)
+- YAML output parsing (thoughts + draft)
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Optional
 import yaml
 
 from .thinking_pool import Thought
-from .message_pool import Message
+from .dialogue_pool import DialoguePool, Draft, HistoryEntry, UserMessage
 
 
 # ============================================================================
@@ -25,8 +25,8 @@ from .message_pool import Message
 # ============================================================================
 
 def load_system_prompt() -> str:
-    """Load system prompt from docs/system_prompt_v1.1.md."""
-    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.1.md'
+    """Load system prompt from docs/system_prompt_v1.2.md."""
+    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.2.md'
     if prompt_path.exists():
         return prompt_path.read_text()
     raise FileNotFoundError(f"System prompt not found at {prompt_path}")
@@ -81,29 +81,44 @@ def format_thought_yaml(
     return f'  - |  # age: {age}, cluster: {cluster_comment}\n{indented_text}'
 
 
-def format_message_yaml(message: Message, current_iter: int) -> str:
+def format_draft_yaml(draft: Draft, current_iter: int) -> str:
     """
-    Format a single message as YAML.
+    Format a single draft as YAML with comment metadata.
 
     Format:
-      - source: user
-        to: mind_0
-        age: 162
-        time: 2026-01-15T12:31:19+11:00
-        text: |
-          message text here
+      - |  # age: N, user_seen: true/false
+        draft text here
     """
-    age = current_iter - message.iter
+    age = current_iter - draft.iter
+    seen_str = 'true' if draft.seen else 'false'
 
     # Indent text for YAML block
-    lines = message.text.split('\n')
+    lines = draft.text.split('\n')
     indented_text = '\n'.join('      ' + line for line in lines)
 
-    return f'''  - source: {message.source}
-    to: {message.to}
-    age: {age}
-    time: {message.time}
-    text: |
+    return f'    - |  # age: {age}, user_seen: {seen_str}\n{indented_text}'
+
+
+def format_history_entry_yaml(entry: HistoryEntry, current_iter: int) -> str:
+    """
+    Format a history entry as YAML.
+
+    Format:
+      - from: user/self
+        age: N
+        text: |
+          message text
+    """
+    age = current_iter - entry.iter
+    role = 'self' if entry.role == 'mind' else entry.role
+
+    # Indent text for YAML block
+    lines = entry.text.split('\n')
+    indented_text = '\n'.join('        ' + line for line in lines)
+
+    return f'''    - from: {role}
+      age: {age}
+      text: |
 {indented_text}'''
 
 
@@ -111,23 +126,23 @@ def format_input(
     mind_id: str,
     current_iter: int,
     thoughts: list[Thought],
-    messages: list[Message],
+    dialogue_pool: DialoguePool,
     cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id, size}
     user_time: Optional[str] = None,
 ) -> str:
     """
-    Format input for Mind invocation (v1.1 protocol).
+    Format input for Mind invocation (v1.2 protocol).
 
     Args:
         mind_id: Identity of this mind (e.g., "mind_0")
         current_iter: Current iteration number
         thoughts: Sampled thoughts from thinking pool
-        messages: Active messages from message pool
+        dialogue_pool: Dialogue pool with awaiting/drafts/history
         cluster_assignments: Optional cluster info per thought {cluster_id, size}
         user_time: Optional timestamp override
 
     Returns:
-        YAML string for Mind input with comment-based thought metadata
+        YAML string for Mind input with dialogue section
     """
     if user_time is None:
         user_time = datetime.now(timezone.utc).isoformat()
@@ -135,7 +150,6 @@ def format_input(
     # Build meta section
     meta_yaml = f'''meta:
   self: {mind_id}
-  # The clock of iterations marches ever forward. What persists and what changes?
   iter: {current_iter}
   user_time: {user_time}'''
 
@@ -147,17 +161,53 @@ def format_input(
             cluster_info = cluster_assignments.get(thought.vector_id)
         thought_items.append(format_thought_yaml(thought, cluster_info, current_iter))
 
-    thinking_yaml = 'thinking_pool:\n  # A *random, unordered sample* from the pool. What should be remembered? What should be forgotten?'
+    thinking_yaml = 'thinking_pool:\n  # A *random, unordered sample* from the pool. What should be remembered?'
     if thought_items:
         thinking_yaml += '\n' + '\n'.join(thought_items)
 
-    # Build message pool
-    message_items = [format_message_yaml(m, current_iter) for m in messages]
-    messages_yaml = 'message_pool:\n  # Direct dialogue across the boundary. What deserves a response?'
-    if message_items:
-        messages_yaml += '\n' + '\n'.join(message_items)
+    # Build dialogue section
+    history = dialogue_pool.get_history()
 
-    return f'{meta_yaml}\n\n{thinking_yaml}\n\n{messages_yaml}\n'
+    if dialogue_pool.is_drafting:
+        # Drafting state: show history (if any) + awaiting message + drafts
+        dialogue_yaml = 'dialogue:'
+
+        # Include history for context
+        if history:
+            history_items = [format_history_entry_yaml(h, current_iter) for h in history]
+            dialogue_yaml += '\n  # Conversation history for context\n  history:\n' + '\n'.join(history_items)
+
+        # Show awaiting message
+        awaiting = dialogue_pool.awaiting
+        awaiting_age = current_iter - awaiting.iter
+        awaiting_lines = awaiting.text.split('\n')
+        awaiting_indented = '\n'.join('      ' + line for line in awaiting_lines)
+
+        dialogue_yaml += f'''
+
+  # User's message awaiting your response
+  awaiting:
+    age: {awaiting_age}
+    text: |
+{awaiting_indented}'''
+
+        # Add drafts if any
+        if dialogue_pool.drafts:
+            draft_items = [format_draft_yaml(d, current_iter) for d in dialogue_pool.drafts]
+            dialogue_yaml += '''
+
+  # Your draft responses (most recent = last in list)
+  drafts:
+''' + '\n'.join(draft_items)
+
+    else:
+        # Idle state: show history only
+        dialogue_yaml = 'dialogue:\n  # No pending user message. Conversation history for context.'
+        if history:
+            history_items = [format_history_entry_yaml(h, current_iter) for h in history]
+            dialogue_yaml += '\n  history:\n' + '\n'.join(history_items)
+
+    return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n'
 
 
 # ============================================================================
@@ -170,12 +220,12 @@ class MindOutput:
     def __init__(
         self,
         thoughts: list[str],
-        messages: list[dict],  # [{to, text}, ...]
+        draft: Optional[str] = None,
         skipped: bool = False,
         raw: str = '',
     ):
         self.thoughts = thoughts
-        self.messages = messages
+        self.draft = draft
         self.skipped = skipped
         self.raw = raw
 
@@ -186,12 +236,12 @@ def parse_output(raw: str) -> MindOutput:
 
     Handles:
     - thoughts: list of strings
-    - messages: list of {to, text} dicts
+    - draft: single string (optional)
     - skip: true (explicit opt-out)
     - Empty arrays (valid)
 
     Returns:
-        MindOutput with parsed thoughts and messages
+        MindOutput with parsed thoughts and draft
     """
     # Strip any markdown fencing if present
     content = raw.strip()
@@ -208,14 +258,14 @@ def parse_output(raw: str) -> MindOutput:
         data = yaml.safe_load(content)
     except yaml.YAMLError:
         # If YAML parse fails, return empty (silent failure per protocol)
-        return MindOutput(thoughts=[], messages=[], raw=raw)
+        return MindOutput(thoughts=[], raw=raw)
 
     if data is None:
-        return MindOutput(thoughts=[], messages=[], raw=raw)
+        return MindOutput(thoughts=[], raw=raw)
 
     # Check for explicit skip
     if data.get('skip') is True:
-        return MindOutput(thoughts=[], messages=[], skipped=True, raw=raw)
+        return MindOutput(thoughts=[], skipped=True, raw=raw)
 
     # Extract thoughts
     thoughts = data.get('thoughts', [])
@@ -224,22 +274,16 @@ def parse_output(raw: str) -> MindOutput:
     # Ensure all thoughts are strings
     thoughts = [str(t).strip() for t in thoughts if t]
 
-    # Extract messages
-    messages = data.get('messages', [])
-    if messages is None:
-        messages = []
-    # Validate message format
-    valid_messages = []
-    for msg in messages:
-        if isinstance(msg, dict) and 'to' in msg and 'text' in msg:
-            valid_messages.append({
-                'to': msg['to'],
-                'text': str(msg['text']).strip(),
-            })
+    # Extract draft
+    draft = data.get('draft')
+    if draft is not None:
+        draft = str(draft).strip()
+        if not draft:
+            draft = None
 
     return MindOutput(
         thoughts=thoughts,
-        messages=valid_messages,
+        draft=draft,
         raw=raw,
     )
 
@@ -281,14 +325,14 @@ def invoke_mind(
     Invoke Mind with YAML input/output.
 
     Args:
-        system_prompt: Protocol spec (from docs/system_prompt_v1.0.md)
+        system_prompt: Protocol spec (from docs/system_prompt_v1.2.md)
         user_input: Formatted YAML input
         model: Model to use
         token_limit: Max tokens for response
         api_key: Optional API key override
 
     Returns:
-        MindOutput with parsed thoughts and messages
+        MindOutput with parsed thoughts and draft
     """
     import requests
 

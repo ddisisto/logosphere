@@ -1,7 +1,7 @@
 """
 Session v2 - Dual-pool session management for Logosphere v2.
 
-Manages both thinking_pool and message_pool, with YAML-based config.
+Manages thinking_pool and dialogue_pool with YAML-based config.
 
 Session structure:
     session/
@@ -9,10 +9,10 @@ Session structure:
     ├── thinking/
     │   ├── embeddings.npy
     │   └── pool.yaml
-    ├── messages/
+    ├── dialogue/
     │   └── pool.yaml
     ├── clusters/             # Unchanged from v1
-    └── interventions.jsonl   # Audit trail (kept from v1)
+    └── interventions.jsonl   # Audit trail
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import Optional
 import yaml
 
 from .thinking_pool import ThinkingPool, Thought
-from .message_pool import MessagePool, Message
+from .dialogue_pool import DialoguePool, Draft, HistoryEntry
 from .intervention_log import InterventionLog
 
 
@@ -38,7 +38,8 @@ class SessionConfig:
         k_samples: int = 5,  # Thoughts to sample per iteration
         # Pool parameters
         active_pool_size: int = 50,
-        message_buffer_per_source: int = 10,
+        draft_buffer_size: int = 5,
+        history_pairs: int = 10,
         # LLM
         model: str = "anthropic/claude-haiku-4.5",
         token_limit: int = 4000,
@@ -51,7 +52,8 @@ class SessionConfig:
     ):
         self.k_samples = k_samples
         self.active_pool_size = active_pool_size
-        self.message_buffer_per_source = message_buffer_per_source
+        self.draft_buffer_size = draft_buffer_size
+        self.history_pairs = history_pairs
         self.model = model
         self.token_limit = token_limit
         self.embedding_model = embedding_model
@@ -64,7 +66,8 @@ class SessionConfig:
         return {
             'k_samples': self.k_samples,
             'active_pool_size': self.active_pool_size,
-            'message_buffer_per_source': self.message_buffer_per_source,
+            'draft_buffer_size': self.draft_buffer_size,
+            'history_pairs': self.history_pairs,
             'model': self.model,
             'token_limit': self.token_limit,
             'embedding_model': self.embedding_model,
@@ -81,10 +84,10 @@ class SessionConfig:
 
 class SessionV2:
     """
-    Manages a Logosphere v2 session with dual pools.
+    Manages a Logosphere v2 session with thinking pool and dialogue pool.
 
     Provides:
-    - Unified access to thinking_pool and message_pool
+    - Unified access to thinking_pool and dialogue_pool
     - Iteration tracking
     - Configuration management
     - Intervention logging (audit trail)
@@ -96,7 +99,7 @@ class SessionV2:
         # Paths
         self._session_path = self.session_dir / 'session.yaml'
         self._thinking_dir = self.session_dir / 'thinking'
-        self._messages_dir = self.session_dir / 'messages'
+        self._dialogue_dir = self.session_dir / 'dialogue'
 
         # State
         self.iteration: int = 0
@@ -104,7 +107,7 @@ class SessionV2:
 
         # Pools (lazy loaded)
         self._thinking_pool: Optional[ThinkingPool] = None
-        self._message_pool: Optional[MessagePool] = None
+        self._dialogue_pool: Optional[DialoguePool] = None
 
         # Intervention log
         self.intervention_log = InterventionLog(self.session_dir / 'interventions.jsonl')
@@ -127,20 +130,21 @@ class SessionV2:
         return self._thinking_pool
 
     @property
-    def message_pool(self) -> MessagePool:
-        """Get message pool (lazy loaded)."""
-        if self._message_pool is None:
-            self._message_pool = MessagePool(
-                pool_dir=self._messages_dir,
-                buffer_size_per_source=self.config.message_buffer_per_source,
+    def dialogue_pool(self) -> DialoguePool:
+        """Get dialogue pool (lazy loaded)."""
+        if self._dialogue_pool is None:
+            self._dialogue_pool = DialoguePool(
+                pool_dir=self._dialogue_dir,
+                draft_buffer_size=self.config.draft_buffer_size,
+                history_pairs=self.config.history_pairs,
             )
-        return self._message_pool
+        return self._dialogue_pool
 
     def _init(self) -> None:
         """Initialize new session."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self._thinking_dir.mkdir(exist_ok=True)
-        self._messages_dir.mkdir(exist_ok=True)
+        self._dialogue_dir.mkdir(exist_ok=True)
         self._save()
 
     def _load(self) -> None:
@@ -173,8 +177,8 @@ class SessionV2:
         self._save()
         if self._thinking_pool is not None:
             self._thinking_pool.save()
-        if self._message_pool is not None:
-            self._message_pool.save()
+        if self._dialogue_pool is not None:
+            self._dialogue_pool.save()
 
     # -------------------------------------------------------------------------
     # Thinking pool operations
@@ -199,37 +203,58 @@ class SessionV2:
         return self.thinking_pool.sample(k)
 
     # -------------------------------------------------------------------------
-    # Message pool operations
+    # Dialogue pool operations
     # -------------------------------------------------------------------------
 
-    def add_message(
-        self,
-        source: str,
-        to: str,
-        text: str,
-    ) -> None:
-        """Add a message to the message pool.
-
-        User messages increment the iteration counter (user's "thinking time").
+    def send_message(self, text: str) -> None:
         """
-        # User messages count as an iteration (user's internal thinking)
-        if source == 'user':
-            self.iteration += 1
+        User sends a message.
 
-        self.message_pool.add(
-            source=source,
-            to=to,
-            iter=self.iteration,
-            text=text,
-        )
+        Increments iteration (user's "thinking time") and enters drafting state.
 
-    def get_messages(self) -> list[Message]:
-        """Get all active messages."""
-        return self.message_pool.get_active()
+        Raises:
+            RuntimeError: If there are pending drafts (must accept first)
+        """
+        self.iteration += 1
+        self.dialogue_pool.send_message(text=text, iter=self.iteration)
 
-    def get_messages_for(self, recipient: str) -> list[Message]:
-        """Get messages addressed to a specific recipient."""
-        return self.message_pool.get_active_for_recipient(recipient)
+    def add_draft(self, text: str) -> None:
+        """Mind produces a draft response."""
+        self.dialogue_pool.add_draft(text=text, iter=self.iteration)
+
+    def accept_draft(self, index: int = 1) -> Draft:
+        """
+        Accept a draft, moving the exchange to history.
+
+        Args:
+            index: 1-based index (1=latest, default)
+
+        Returns:
+            The accepted draft
+        """
+        return self.dialogue_pool.accept(index)
+
+    def mark_drafts_seen(self, indices: Optional[list[int]] = None) -> None:
+        """
+        Mark drafts as seen.
+
+        Args:
+            indices: 1-based indices (1=latest). None means mark all.
+        """
+        self.dialogue_pool.mark_seen(indices)
+
+    @property
+    def is_drafting(self) -> bool:
+        """True if there's a user message awaiting response."""
+        return self.dialogue_pool.is_drafting
+
+    def get_drafts(self) -> list[tuple[int, Draft]]:
+        """Get drafts for display (newest first, 1-indexed)."""
+        return self.dialogue_pool.get_drafts_for_display()
+
+    def get_history(self) -> list[HistoryEntry]:
+        """Get conversation history."""
+        return self.dialogue_pool.get_history()
 
     # -------------------------------------------------------------------------
     # Clustering compatibility
@@ -268,12 +293,8 @@ class SessionV2:
             session._save()
 
         if initial_prompt:
-            session.add_message(
-                source='user',
-                to='mind_0',
-                text=initial_prompt,
-            )
-            session.save()  # Save both iteration and message pool
+            session.send_message(initial_prompt)
+            session.save()
 
         return session
 

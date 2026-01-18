@@ -1,7 +1,7 @@
 """
 Mind v2 Runner - Core loop for dual-pool reasoning.
 
-Sample thoughts → invoke mind → embed thoughts → cluster → add messages
+Sample thoughts → invoke mind → embed thoughts → cluster → add draft
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from .config import MindConfig
 class StepResult:
     """Result of a single iteration."""
     thoughts_added: int
-    messages_added: int
+    draft_added: bool
     skipped: bool
     raw_output: str
 
@@ -37,12 +37,12 @@ class MindRunner:
 
     Core loop:
     1. Sample thoughts from thinking_pool
-    2. Get messages from message_pool
+    2. Get dialogue state (awaiting/drafts/history)
     3. Format YAML input
     4. Invoke Mind (LLM)
     5. Parse YAML output
     6. Embed new thoughts → thinking_pool
-    7. Add new messages → message_pool
+    7. Add new draft → dialogue_pool (if any)
     8. Run incremental clustering on new thoughts
     """
 
@@ -70,9 +70,19 @@ class MindRunner:
         """
         Execute single iteration.
 
+        Raises:
+            RuntimeError: If not in drafting state (no awaiting message)
+
         Returns:
             StepResult with counts and status
         """
+        # Guard: must be in drafting state
+        if not self.session.is_drafting:
+            raise RuntimeError(
+                "Cannot run iterations while idle. "
+                "Send a message first with 'mind message'."
+            )
+
         # 1. Sample thoughts from thinking pool
         thoughts, sampled_ids = self.session.sample_thoughts(self.session.config.k_samples)
 
@@ -94,19 +104,17 @@ class MindRunner:
                     size = cluster_sizes.get(entry.cluster_id) if entry.cluster_id.startswith('cluster_') else None
                     cluster_assignments[vid] = {'cluster_id': entry.cluster_id, 'size': size}
 
-        # 3. Get messages from message pool
-        messages = self.session.get_messages()
-
         if self.config.verbose:
+            state = "drafting" if self.session.is_drafting else "idle"
             print(f"\n[Iteration {self.session.iteration}] "
-                  f"Sampled {len(thoughts)} thoughts, {len(messages)} messages")
+                  f"Sampled {len(thoughts)} thoughts, state={state}")
 
-        # 4. Format YAML input
+        # 3. Format YAML input with dialogue pool
         user_input = format_input(
             mind_id=self.config.mind_id,
             current_iter=self.session.iteration,
             thoughts=thoughts,
-            messages=messages,
+            dialogue_pool=self.session.dialogue_pool,
             cluster_assignments=cluster_assignments,
         )
 
@@ -122,7 +130,7 @@ class MindRunner:
             print(user_input)
             print("=" * 60)
 
-        # 5. Invoke Mind
+        # 4. Invoke Mind
         output: MindOutput = invoke_mind(
             system_prompt=self.system_prompt,
             user_input=user_input,
@@ -144,12 +152,12 @@ class MindRunner:
             self.session.save()
             return StepResult(
                 thoughts_added=0,
-                messages_added=0,
+                draft_added=False,
                 skipped=True,
                 raw_output=output.raw,
             )
 
-        # 6. Process new thoughts → thinking_pool
+        # 5. Process new thoughts → thinking_pool
         thoughts_added = 0
         new_thought_ids = []
         for thought_text in output.thoughts:
@@ -168,26 +176,17 @@ class MindRunner:
                     preview = thought_text[:60] + "..." if len(thought_text) > 60 else thought_text
                     print(f"  [thought] {preview}")
 
-        # 7. Process new messages → message_pool
-        messages_added = 0
-        for msg in output.messages:
-            to = msg.get('to', 'user')
-            text = msg.get('text', '').strip()
-            if not text:
-                continue
-
-            self.session.add_message(
-                source=self.config.mind_id,
-                to=to,
-                text=text,
-            )
-            messages_added += 1
+        # 6. Process draft → dialogue_pool
+        draft_added = False
+        if output.draft:
+            self.session.add_draft(output.draft)
+            draft_added = True
 
             if self.config.verbose:
-                preview = text[:60] + "..." if len(text) > 60 else text
-                print(f"  [message → {to}] {preview}")
+                preview = output.draft[:60] + "..." if len(output.draft) > 60 else output.draft
+                print(f"  [draft] {preview}")
 
-        # 8. Run incremental clustering on new thoughts (auto-initializes if needed)
+        # 7. Run incremental clustering on new thoughts (auto-initializes if needed)
         if new_thought_ids:
             try:
                 stats = self.cluster_mgr.process(
@@ -211,13 +210,13 @@ class MindRunner:
                 if self.config.verbose:
                     print(f"  [clustering] error: {e}")
 
-        # 9. Increment iteration and save
+        # 8. Increment iteration and save
         self.session.iteration += 1
         self.session.save()
 
         return StepResult(
             thoughts_added=thoughts_added,
-            messages_added=messages_added,
+            draft_added=draft_added,
             skipped=False,
             raw_output=output.raw,
         )
@@ -245,46 +244,52 @@ class MindRunner:
         if self.config.verbose:
             print("-" * 40)
             total_thoughts = sum(r.thoughts_added for r in results)
-            total_messages = sum(r.messages_added for r in results)
+            total_drafts = sum(1 for r in results if r.draft_added)
             skipped = sum(1 for r in results if r.skipped)
             print(f"Completed {iterations} iterations: "
-                  f"{total_thoughts} thoughts, {total_messages} messages, "
+                  f"{total_thoughts} thoughts, {total_drafts} drafts, "
                   f"{skipped} skipped")
 
         return results
 
-    def run_until_message(self, max_iterations: int = 100) -> list[StepResult]:
+    def run_until_draft(self, max_iterations: int = 100) -> list[StepResult]:
         """
-        Run until a message is emitted to the message pool.
+        Run until a draft is produced.
 
-        This is the natural conversation breakpoint: the mind has something
-        to say "out loud" that should be read before continuing.
+        This is the natural conversation breakpoint when in drafting state:
+        the mind has produced a response draft for the user to review.
+
+        Only meaningful when is_drafting=True (user message pending).
+        When idle, this will run until max_iterations without a clear endpoint.
 
         Args:
             max_iterations: Safety limit to prevent infinite loops
 
         Returns:
-            List of StepResults (last one will have messages_added > 0)
+            List of StepResults (last one will have draft_added=True if successful)
         """
         results = []
 
         if self.config.verbose:
-            print("Running until message...")
+            if self.session.is_drafting:
+                print("Running until draft response...")
+            else:
+                print("Running (no pending message, will continue until max iterations)...")
             print("-" * 40)
 
         for i in range(max_iterations):
             result = self.step()
             results.append(result)
 
-            if result.messages_added > 0:
+            if result.draft_added:
                 if self.config.verbose:
                     print("-" * 40)
-                    print(f"Message emitted after {len(results)} iterations")
+                    print(f"Draft produced after {len(results)} iterations")
                 break
         else:
             if self.config.verbose:
                 print("-" * 40)
-                print(f"Max iterations ({max_iterations}) reached without message")
+                print(f"Max iterations ({max_iterations}) reached without draft")
 
         return results
 
