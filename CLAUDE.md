@@ -81,12 +81,17 @@ mind status                            # Show current state
 ### Running Iterations
 
 ```bash
-mind run                               # Run until draft produced (default)
+mind run                               # Run until stop condition (observe mode)
+mind run --background                  # Continuous mode: stop on hard signal only
 mind run 10                            # Run exactly 10 iterations
-mind run --max 50                      # Safety limit for run-until-draft
+mind run --max 50                      # Safety limit for run-until-stop
 mind step                              # Single iteration
 mind step --debug                      # Dump full LLM request/response
 ```
+
+**Stop conditions:**
+- Observe mode (default): stops on each draft
+- Background mode (`-b`): stops on hard signal only (3+ consecutive no-drafts, or true silence)
 
 ### Dialogue
 
@@ -147,6 +152,12 @@ Clustering auto-initializes on first iteration - no bootstrap required.
 - All drafts stored (unlimited), but mind sees display-limited subset
 - All drafts archived to `draft_archive.jsonl` when exchange completes
 - Active drafts cleared after archiving; archive is append-only forever
+
+**Signal Channel:**
+- Draft buffer serves as bidirectional communication channel
+- Hard signal: no draft output = demands user attention
+- Soft signal: `+1` draft = endorses latest, still iterating
+- True silence (no draft, no thoughts) = immediate stop signal
 
 ### Dialogue Flow
 
