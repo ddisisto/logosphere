@@ -340,10 +340,68 @@ def cmd_accept(args) -> int:
         return 1
 
 
+def cmd_drafts_archive(args, session: SessionV2) -> int:
+    """Show archived drafts from past exchanges."""
+    dialogue_pool = session.dialogue_pool
+
+    # If no refs provided, list all exchanges
+    if not args.refs:
+        exchanges = dialogue_pool.list_exchanges()
+        if not exchanges:
+            print("No archived exchanges yet.")
+            print("Drafts are archived when you accept a draft with 'mind accept'.")
+            return 0
+
+        print(f"Archived exchanges ({len(exchanges)} total):")
+        print()
+        for ex in exchanges:
+            accepted = f"accepted #{ex['accepted_index']}" if ex['accepted_index'] else "no accepted"
+            iter_range = f"iter {ex['first_iter']}-{ex['last_iter']}" if ex['first_iter'] != ex['last_iter'] else f"iter {ex['first_iter']}"
+            print(f"  {ex['exchange_id']}: {ex['draft_count']} draft(s), {accepted}, {iter_range}")
+
+        print()
+        print("Usage: mind drafts archive <exchange_id>  # Show all drafts for that exchange")
+        return 0
+
+    # Show drafts for a specific exchange
+    exchange_id = args.refs[0]
+    drafts = dialogue_pool.get_exchange_drafts(exchange_id)
+
+    if not drafts:
+        print(f"No drafts found for exchange '{exchange_id}'.")
+        exchanges = dialogue_pool.list_exchanges()
+        if exchanges:
+            print(f"Valid exchange IDs: {[e['exchange_id'] for e in exchanges]}")
+        return 1
+
+    print(f"Exchange {exchange_id} ({len(drafts)} draft(s)):")
+    print()
+
+    for draft in drafts:
+        accepted = "[ACCEPTED]" if draft.get('accepted') else ""
+        seen = "[seen]" if draft.get('user_seen') else "[unseen]"
+        print(f"Draft #{draft['draft_index']} (iter {draft['iter_created']}) {seen} {accepted}")
+        print("\u2500" * 20)
+
+        # Truncate to max 8 lines
+        truncated, remaining = truncate_text(draft['text'], max_lines=8)
+        for line in truncated.split('\n'):
+            print(f"  {line}")
+        if remaining > 0:
+            print(f"  ... ({remaining} more lines)")
+        print()
+
+    return 0
+
+
 def cmd_drafts(args) -> int:
     """Show or manage drafts."""
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
+
+    # Handle 'archive' subcommand - works regardless of drafting state
+    if args.drafts_command == 'archive':
+        return cmd_drafts_archive(args, session)
 
     if not session.is_drafting:
         print("No pending message. Send a message with 'mind message' first.")
@@ -620,9 +678,9 @@ def main():
 
     # drafts
     p_drafts = subparsers.add_parser('drafts', help='Show or manage drafts')
-    p_drafts.add_argument('drafts_command', nargs='?', choices=['seen', 'show'],
-                          help='Subcommand: seen, show')
-    p_drafts.add_argument('refs', nargs='*', help='Draft references (iter or negative offset)')
+    p_drafts.add_argument('drafts_command', nargs='?', choices=['seen', 'show', 'archive'],
+                          help='Subcommand: seen, show, archive')
+    p_drafts.add_argument('refs', nargs='*', help='Draft references (iter or negative offset) or exchange_id for archive')
 
     # history
     subparsers.add_parser('history', help='Show conversation history')

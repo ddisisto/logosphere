@@ -97,6 +97,8 @@ cat prompt.md | mind message           # Send via pipe
 mind drafts                            # Show current drafts (newest first)
 mind drafts seen                       # Mark all drafts as seen
 mind drafts seen 1 3                   # Mark specific drafts as seen
+mind drafts archive                    # List all archived exchanges
+mind drafts archive exc_42_000         # Show all drafts for an exchange
 mind accept                            # Accept latest draft
 mind accept 2                          # Accept specific draft
 mind history                           # Show conversation history
@@ -143,7 +145,8 @@ Clustering auto-initializes on first iteration - no bootstrap required.
 - User sends message → mind produces drafts → user accepts one
 - Accepted exchanges form conversation history (unlimited storage)
 - All drafts stored (unlimited), but mind sees display-limited subset
-- Non-accepted drafts pruned when exchange completes
+- All drafts archived to `draft_archive.jsonl` when exchange completes
+- Active drafts cleared after archiving; archive is append-only forever
 
 ### Dialogue Flow
 
@@ -316,7 +319,21 @@ history:
     time: 2026-01-15T10:05:00+00:00
     text: |
       earlier response
+    accepted_draft_index: 3
+    draft_archive_id: exc_100_000
 ```
+
+### dialogue/draft_archive.jsonl
+
+Append-only archive of all drafts from completed exchanges. Each line is a JSON object:
+
+```json
+{"exchange_id": "exc_100_000", "draft_index": 1, "iter_created": 102, "time_created": "2026-01-15T10:02:00+00:00", "text": "first draft...", "user_seen": true, "accepted": false, "accepted_by_exchange": null}
+{"exchange_id": "exc_100_000", "draft_index": 2, "iter_created": 103, "time_created": "2026-01-15T10:03:00+00:00", "text": "second draft...", "user_seen": true, "accepted": false, "accepted_by_exchange": null}
+{"exchange_id": "exc_100_000", "draft_index": 3, "iter_created": 105, "time_created": "2026-01-15T10:05:00+00:00", "text": "accepted response", "user_seen": true, "accepted": true, "accepted_by_exchange": "exc_100_000"}
+```
+
+Exchange IDs follow the format `exc_{awaiting_iter}_{sequence:03d}` where the sequence handles rare cases of multiple exchanges at the same iteration.
 
 ---
 

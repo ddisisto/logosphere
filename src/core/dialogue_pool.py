@@ -13,6 +13,7 @@ Storage:
 
 from __future__ import annotations
 
+import json
 import tempfile
 import shutil
 from dataclasses import dataclass, field
@@ -90,11 +91,14 @@ class HistoryEntry:
     time: str
     text: str
     accepted_draft_index: Optional[int] = None  # For mind entries: which draft was accepted
+    draft_archive_id: Optional[str] = None  # For mind entries: exchange ID in draft archive
 
     def to_dict(self) -> dict:
         d = {'role': self.role, 'iter': self.iter, 'time': self.time, 'text': self.text}
         if self.accepted_draft_index is not None:
             d['accepted_draft_index'] = self.accepted_draft_index
+        if self.draft_archive_id is not None:
+            d['draft_archive_id'] = self.draft_archive_id
         return d
 
     @classmethod
@@ -105,6 +109,7 @@ class HistoryEntry:
             time=data['time'],
             text=data['text'],
             accepted_draft_index=data.get('accepted_draft_index'),
+            draft_archive_id=data.get('draft_archive_id'),
         )
 
 
@@ -139,8 +144,9 @@ class DialoguePool:
         self.drafts: list[Draft] = []  # All drafts, oldest first, never pruned
         self.history: list[HistoryEntry] = []  # Oldest first, never pruned
 
-        # Path
+        # Paths
         self._pool_path = self.pool_dir / 'pool.yaml'
+        self._archive_path = self.pool_dir / 'draft_archive.jsonl'
 
         # Load if exists
         if self._pool_path.exists():
@@ -256,7 +262,11 @@ class DialoguePool:
             valid = [d.index for d in self.drafts]
             raise IndexError(f"Draft index {index} not found. Valid indices: {valid}")
 
-        # Add to history: user message then accepted response (with draft index)
+        # Generate exchange ID and archive all drafts before clearing
+        exchange_id = self._generate_exchange_id()
+        self._archive_all_drafts(exchange_id, accepted.index)
+
+        # Add to history: user message then accepted response (with draft index and archive ID)
         # History is never pruned - unlimited storage
         self.history.append(HistoryEntry(
             role='user',
@@ -270,6 +280,7 @@ class DialoguePool:
             time=accepted.time,
             text=accepted.text,
             accepted_draft_index=accepted.index,
+            draft_archive_id=exchange_id,
         ))
 
         # Clear drafting state
@@ -333,6 +344,151 @@ class DialoguePool:
         if len(self.history) <= max_entries:
             return list(self.history)
         return list(self.history[-max_entries:])
+
+    # -------------------------------------------------------------------------
+    # Exchange ID and Draft Archive
+    # -------------------------------------------------------------------------
+
+    def _generate_exchange_id(self) -> str:
+        """
+        Generate a unique exchange ID for archiving drafts.
+
+        Format: exc_{awaiting_iter}_{sequence:03d}
+
+        The sequence number handles the (rare) case of multiple exchanges
+        starting at the same iteration (e.g., after session restoration).
+        """
+        if self.awaiting is None:
+            raise RuntimeError("Cannot generate exchange ID without awaiting message")
+
+        base = f"exc_{self.awaiting.iter}"
+
+        # Check existing exchanges to find the next sequence number
+        sequence = 0
+        if self._archive_path.exists():
+            with open(self._archive_path) as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        eid = entry.get('exchange_id', '')
+                        if eid.startswith(base + '_'):
+                            # Extract sequence number
+                            suffix = eid[len(base) + 1:]
+                            try:
+                                seq = int(suffix)
+                                sequence = max(sequence, seq + 1)
+                            except ValueError:
+                                pass
+                    except json.JSONDecodeError:
+                        pass
+
+        return f"{base}_{sequence:03d}"
+
+    def _archive_all_drafts(self, exchange_id: str, accepted_index: int) -> None:
+        """
+        Archive all current drafts to the JSONL archive file.
+
+        Each entry contains:
+        - exchange_id: The exchange this draft belongs to
+        - draft_index: The absolute index of this draft within the exchange
+        - iter_created: Iteration when draft was created
+        - time_created: ISO timestamp when draft was created
+        - text: The draft text content
+        - user_seen: Whether the user had marked this draft as seen
+        - accepted: Whether this draft was the accepted one
+        - accepted_by_exchange: The exchange_id (redundant but useful for queries)
+        """
+        self.pool_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(self._archive_path, 'a') as f:
+            for draft in self.drafts:
+                entry = {
+                    'exchange_id': exchange_id,
+                    'draft_index': draft.index,
+                    'iter_created': draft.iter,
+                    'time_created': draft.time,
+                    'text': draft.text,
+                    'user_seen': draft.seen,
+                    'accepted': draft.index == accepted_index,
+                    'accepted_by_exchange': exchange_id if draft.index == accepted_index else None,
+                }
+                f.write(json.dumps(entry) + '\n')
+
+    def get_exchange_drafts(self, exchange_id: str) -> list[dict]:
+        """
+        Retrieve all archived drafts for a given exchange ID.
+
+        Returns:
+            List of draft entries (dicts) for the exchange, sorted by draft_index
+        """
+        if not self._archive_path.exists():
+            return []
+
+        results = []
+        with open(self._archive_path) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    if entry.get('exchange_id') == exchange_id:
+                        results.append(entry)
+                except json.JSONDecodeError:
+                    pass
+
+        # Sort by draft_index
+        results.sort(key=lambda x: x.get('draft_index', 0))
+        return results
+
+    def list_exchanges(self) -> list[dict]:
+        """
+        List all exchange IDs in the archive with metadata.
+
+        Returns:
+            List of dicts with:
+            - exchange_id: The exchange ID
+            - draft_count: Number of drafts in this exchange
+            - accepted_index: Index of the accepted draft
+            - first_iter: Iteration of first draft
+            - last_iter: Iteration of last draft
+        """
+        if not self._archive_path.exists():
+            return []
+
+        exchanges: dict[str, dict] = {}
+
+        with open(self._archive_path) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                    eid = entry.get('exchange_id')
+                    if not eid:
+                        continue
+
+                    if eid not in exchanges:
+                        exchanges[eid] = {
+                            'exchange_id': eid,
+                            'draft_count': 0,
+                            'accepted_index': None,
+                            'first_iter': entry.get('iter_created'),
+                            'last_iter': entry.get('iter_created'),
+                        }
+
+                    exchanges[eid]['draft_count'] += 1
+
+                    if entry.get('accepted'):
+                        exchanges[eid]['accepted_index'] = entry.get('draft_index')
+
+                    iter_created = entry.get('iter_created')
+                    if iter_created is not None:
+                        if exchanges[eid]['first_iter'] is None or iter_created < exchanges[eid]['first_iter']:
+                            exchanges[eid]['first_iter'] = iter_created
+                        if exchanges[eid]['last_iter'] is None or iter_created > exchanges[eid]['last_iter']:
+                            exchanges[eid]['last_iter'] = iter_created
+
+                except json.JSONDecodeError:
+                    pass
+
+        # Sort by exchange_id (which implicitly sorts by creation order due to iter prefix)
+        return sorted(exchanges.values(), key=lambda x: x['exchange_id'])
 
     # -------------------------------------------------------------------------
     # Persistence
