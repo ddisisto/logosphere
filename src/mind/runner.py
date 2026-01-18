@@ -109,12 +109,16 @@ class MindRunner:
             print(f"\n[Iteration {self.session.iteration}] "
                   f"Sampled {len(thoughts)} thoughts, state={state}")
 
-        # 3. Format YAML input with dialogue pool
+        # 3. Get display-limited drafts
+        drafts_for_display = self.session.get_drafts_for_mind()
+
+        # 4. Format YAML input with dialogue pool
         user_input = format_input(
             mind_id=self.config.mind_id,
             current_iter=self.session.iteration,
             thoughts=thoughts,
             dialogue_pool=self.session.dialogue_pool,
+            drafts_for_display=drafts_for_display,
             cluster_assignments=cluster_assignments,
         )
 

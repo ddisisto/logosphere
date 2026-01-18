@@ -38,7 +38,9 @@ class SessionConfig:
         k_samples: int = 5,  # Thoughts to sample per iteration
         # Pool parameters
         active_pool_size: int = 50,
-        draft_buffer_size: int = 5,
+        # Draft display limits (storage is unlimited)
+        draft_display_chars: int = 2000,  # Show drafts up to this many chars
+        draft_display_count: int = 16,  # Show at most this many drafts
         history_pairs: int = 10,
         # LLM
         model: str = "anthropic/claude-haiku-4.5",
@@ -52,7 +54,8 @@ class SessionConfig:
     ):
         self.k_samples = k_samples
         self.active_pool_size = active_pool_size
-        self.draft_buffer_size = draft_buffer_size
+        self.draft_display_chars = draft_display_chars
+        self.draft_display_count = draft_display_count
         self.history_pairs = history_pairs
         self.model = model
         self.token_limit = token_limit
@@ -66,7 +69,8 @@ class SessionConfig:
         return {
             'k_samples': self.k_samples,
             'active_pool_size': self.active_pool_size,
-            'draft_buffer_size': self.draft_buffer_size,
+            'draft_display_chars': self.draft_display_chars,
+            'draft_display_count': self.draft_display_count,
             'history_pairs': self.history_pairs,
             'model': self.model,
             'token_limit': self.token_limit,
@@ -135,7 +139,6 @@ class SessionV2:
         if self._dialogue_pool is None:
             self._dialogue_pool = DialoguePool(
                 pool_dir=self._dialogue_dir,
-                draft_buffer_size=self.config.draft_buffer_size,
                 history_pairs=self.config.history_pairs,
             )
         return self._dialogue_pool
@@ -248,9 +251,16 @@ class SessionV2:
         """True if there's a user message awaiting response."""
         return self.dialogue_pool.is_drafting
 
-    def get_drafts(self) -> list[tuple[int, Draft]]:
-        """Get drafts for display (newest first, 1-indexed)."""
-        return self.dialogue_pool.get_drafts_for_display()
+    def get_drafts_for_mind(self) -> list[Draft]:
+        """Get drafts for display to mind (newest first, within limits)."""
+        return self.dialogue_pool.get_drafts_for_display(
+            max_chars=self.config.draft_display_chars,
+            max_count=self.config.draft_display_count,
+        )
+
+    def get_all_drafts(self) -> list[Draft]:
+        """Get all drafts (oldest first) for user display."""
+        return self.dialogue_pool.get_all_drafts()
 
     def get_history(self) -> list[HistoryEntry]:
         """Get conversation history."""

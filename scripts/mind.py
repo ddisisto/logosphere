@@ -93,8 +93,8 @@ def cmd_open(args) -> int:
 
     # Show dialogue state
     if session.is_drafting:
-        drafts = session.get_drafts()
-        print(f"  State: drafting ({len(drafts)} drafts)")
+        all_drafts = session.get_all_drafts()
+        print(f"  State: drafting ({len(all_drafts)} drafts)")
     else:
         history = session.get_history()
         print(f"  State: idle ({len(history) // 2} exchanges in history)")
@@ -115,16 +115,16 @@ def cmd_status(args) -> int:
     # Show dialogue state
     if session.is_drafting:
         awaiting = session.dialogue_pool.awaiting
-        drafts = session.get_drafts()
+        all_drafts = session.get_all_drafts()
         print(f"\nAwaiting response:")
         preview = awaiting.text[:60] + "..." if len(awaiting.text) > 60 else awaiting.text
         print(f"  {preview}")
-        print(f"\nDrafts: {len(drafts)}")
-        if drafts:
-            idx, latest = drafts[0]
+        print(f"\nDrafts: {len(all_drafts)}")
+        if all_drafts:
+            latest = all_drafts[-1]
             preview = latest.text[:60] + "..." if len(latest.text) > 60 else latest.text
             seen = "seen" if latest.seen else "unseen"
-            print(f"  [1] ({seen}) {preview}")
+            print(f"  #{latest.index} ({seen}) {preview}")
     else:
         history = session.get_history()
         print(f"\nState: idle ({len(history) // 2} exchanges in history)")
@@ -185,9 +185,9 @@ def cmd_message(args) -> int:
 
     # Check for pending response
     if session.is_drafting:
-        drafts = session.get_drafts()
-        if drafts:
-            print(f"Error: Cannot send message while awaiting response ({len(drafts)} draft(s) pending).")
+        all_drafts = session.get_all_drafts()
+        if all_drafts:
+            print(f"Error: Cannot send message while awaiting response ({len(all_drafts)} draft(s) pending).")
             print("Use 'mind accept' to accept a draft first, or 'mind drafts' to view them.")
         else:
             print("Error: Cannot send message while awaiting response.")
@@ -235,7 +235,7 @@ def cmd_message(args) -> int:
 
 
 def cmd_accept(args) -> int:
-    """Accept a draft response."""
+    """Accept a draft response by absolute index."""
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
 
@@ -243,17 +243,16 @@ def cmd_accept(args) -> int:
         print("No pending drafts to accept.")
         return 1
 
-    drafts = session.get_drafts()
-    if not drafts:
+    all_drafts = session.get_all_drafts()
+    if not all_drafts:
         print("No drafts available. Run 'mind run' to generate drafts.")
         return 1
 
-    # Parse index (1-based, 1=latest)
-    index = args.index if args.index else 1
-
-    if not (1 <= index <= len(drafts)):
-        print(f"Invalid draft index {index}. Valid range: 1-{len(drafts)}")
-        return 1
+    # Default to latest draft's index
+    if args.index is None:
+        index = all_drafts[-1].index  # Latest draft
+    else:
+        index = args.index
 
     try:
         accepted = session.accept_draft(index)
@@ -265,6 +264,10 @@ def cmd_accept(args) -> int:
         print("-" * 40)
         print("Exchange added to history. Ready for next message.")
         return 0
+    except IndexError as e:
+        valid = [d.index for d in all_drafts]
+        print(f"Invalid draft index {index}. Valid indices: {valid}")
+        return 1
     except Exception as e:
         print(f"Error: {e}")
         return 1
@@ -282,7 +285,7 @@ def cmd_drafts(args) -> int:
     # Handle 'seen' subcommand
     if args.drafts_command == 'seen':
         if args.indices:
-            # Mark specific drafts as seen
+            # Mark specific drafts as seen (by absolute index)
             indices = [int(i) for i in args.indices]
             session.mark_drafts_seen(indices)
             print(f"Marked drafts {indices} as seen.")
@@ -293,33 +296,36 @@ def cmd_drafts(args) -> int:
         session.save()
         return 0
 
-    # Default: show drafts
+    # Default: show all drafts
     awaiting = session.dialogue_pool.awaiting
     print("Awaiting response to:")
     print("-" * 40)
     print(awaiting.text)
     print("-" * 40)
 
-    drafts = session.get_drafts()
-    if not drafts:
+    all_drafts = session.get_all_drafts()
+    if not all_drafts:
         print("\nNo drafts yet. Run 'mind run' to generate drafts.")
         return 0
 
-    print(f"\nDrafts ({len(drafts)} total, newest first):")
+    print(f"\nDrafts ({len(all_drafts)} total, oldest first):")
     print()
 
-    for idx, draft in drafts:
+    for draft in all_drafts:
         seen = "[seen]  " if draft.seen else "[unseen]"
-        print(f"  {idx}. {seen} (age: {session.iteration - draft.iter})")
+        age = session.iteration - draft.iter
+        print(f"  #{draft.index} {seen} (age: {age})")
         # Show text with indentation
         for line in draft.text.split('\n'):
             print(f"     {line}")
         print()
 
+    latest = all_drafts[-1]
     print("Commands:")
-    print("  mind accept [N]      Accept draft N (default: 1=latest)")
+    print(f"  mind accept          Accept latest draft (#{latest.index})")
+    print(f"  mind accept N        Accept draft #N")
     print("  mind drafts seen     Mark all as seen")
-    print("  mind drafts seen N   Mark draft N as seen")
+    print("  mind drafts seen N   Mark draft #N as seen")
 
     return 0
 

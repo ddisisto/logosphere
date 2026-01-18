@@ -4,6 +4,7 @@ DialoguePool - Draft-based dialogue system for Logosphere v2.
 Replaces MessagePool with a structured dialogue flow:
 - User sends message → mind drafts responses → user accepts one
 - Strict one-to-one: can't send new message until accepting a draft
+- All drafts preserved with absolute indices (never pruned)
 
 Storage:
     dialogue/
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 import tempfile
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -55,17 +56,25 @@ class UserMessage:
 @dataclass
 class Draft:
     """A draft response from the mind."""
+    index: int  # Absolute index within this exchange (1, 2, 3, ...)
     iter: int
     time: str
     text: str
     seen: bool = False
 
     def to_dict(self) -> dict:
-        return {'iter': self.iter, 'time': self.time, 'text': self.text, 'seen': self.seen}
+        return {
+            'index': self.index,
+            'iter': self.iter,
+            'time': self.time,
+            'text': self.text,
+            'seen': self.seen,
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> Draft:
         return cls(
+            index=data.get('index', 0),  # Legacy compat
             iter=data['iter'],
             time=data['time'],
             text=data['text'],
@@ -80,9 +89,13 @@ class HistoryEntry:
     iter: int
     time: str
     text: str
+    accepted_draft_index: Optional[int] = None  # For mind entries: which draft was accepted
 
     def to_dict(self) -> dict:
-        return {'role': self.role, 'iter': self.iter, 'time': self.time, 'text': self.text}
+        d = {'role': self.role, 'iter': self.iter, 'time': self.time, 'text': self.text}
+        if self.accepted_draft_index is not None:
+            d['accepted_draft_index'] = self.accepted_draft_index
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> HistoryEntry:
@@ -91,6 +104,7 @@ class HistoryEntry:
             iter=data['iter'],
             time=data['time'],
             text=data['text'],
+            accepted_draft_index=data.get('accepted_draft_index'),
         )
 
 
@@ -100,28 +114,31 @@ class DialoguePool:
 
     State machine:
     - IDLE: No awaiting message. History available for context.
-    - DRAFTING: User message awaiting response. Drafts accumulate.
+    - DRAFTING: User message awaiting response. Drafts accumulate (never pruned).
 
     Flow:
     1. user sends message → state becomes DRAFTING
-    2. mind iterations produce drafts
+    2. mind iterations produce drafts (all preserved with absolute indices)
     3. user marks drafts as seen (optional)
     4. user accepts a draft → state becomes IDLE, exchange added to history
+
+    Signal semantics:
+    - opt-out (no draft): demands user attention to current buffer
+    - short drafts: cycle buffer fast, can be used as signals
+    - silence after good draft: implicit "ship it"
     """
 
     def __init__(
         self,
         pool_dir: Path,
-        draft_buffer_size: int = 5,
         history_pairs: int = 10,
     ):
         self.pool_dir = Path(pool_dir)
-        self.draft_buffer_size = draft_buffer_size
         self.history_pairs = history_pairs  # Max user+response pairs to retain
 
         # State
         self.awaiting: Optional[UserMessage] = None
-        self.drafts: list[Draft] = []  # Oldest first in storage
+        self.drafts: list[Draft] = []  # All drafts, oldest first, never pruned
         self.history: list[HistoryEntry] = []  # Oldest first
 
         # Path
@@ -156,18 +173,24 @@ class DialoguePool:
         )
         self.drafts = []
 
-    def add_draft(self, text: str, iter: int) -> None:
+    def add_draft(self, text: str, iter: int) -> int:
         """
         Mind produces a draft response.
 
-        If buffer is full, oldest draft is discarded.
+        All drafts are preserved with absolute indices.
+
+        Returns:
+            The absolute index of the new draft
         """
         if not self.is_drafting:
             # No awaiting message - this shouldn't happen in normal flow
-            # but we'll allow it (draft goes nowhere useful)
-            return
+            return -1
+
+        # Absolute index is 1-based, sequential
+        index = len(self.drafts) + 1
 
         draft = Draft(
+            index=index,
             iter=iter,
             time=datetime.now(timezone.utc).isoformat(),
             text=text,
@@ -175,42 +198,48 @@ class DialoguePool:
         )
 
         self.drafts.append(draft)
-
-        # Enforce buffer limit (drop oldest)
-        if len(self.drafts) > self.draft_buffer_size:
-            self.drafts = self.drafts[-self.draft_buffer_size:]
+        return index
 
     def mark_seen(self, indices: Optional[list[int]] = None) -> None:
         """
         Mark drafts as seen.
 
         Args:
-            indices: 1-based indices (1=latest). None means mark all.
+            indices: Absolute indices (1, 2, 3...). None means mark all.
         """
         if indices is None:
             for draft in self.drafts:
                 draft.seen = True
         else:
-            # Convert 1-based (newest first) to 0-based (oldest first in storage)
-            for i in indices:
-                if 1 <= i <= len(self.drafts):
-                    # i=1 is latest = last in storage
-                    storage_idx = len(self.drafts) - i
-                    self.drafts[storage_idx].seen = True
+            for idx in indices:
+                # Find draft with this absolute index
+                for draft in self.drafts:
+                    if draft.index == idx:
+                        draft.seen = True
+                        break
 
-    def accept(self, index: int = 1) -> Draft:
+    def mark_all_unseen_as_seen(self) -> int:
+        """Mark all currently unseen drafts as seen. Returns count marked."""
+        count = 0
+        for draft in self.drafts:
+            if not draft.seen:
+                draft.seen = True
+                count += 1
+        return count
+
+    def accept(self, index: int) -> Draft:
         """
-        Accept a draft, moving the exchange to history.
+        Accept a draft by absolute index, moving the exchange to history.
 
         Args:
-            index: 1-based index (1=latest, default)
+            index: Absolute index of draft to accept (1, 2, 3...)
 
         Returns:
             The accepted draft
 
         Raises:
             RuntimeError: If not in drafting state or no drafts
-            IndexError: If index out of range
+            IndexError: If index not found
         """
         if not self.is_drafting:
             raise RuntimeError("No pending message to accept draft for.")
@@ -218,14 +247,18 @@ class DialoguePool:
         if not self.drafts:
             raise RuntimeError("No drafts available to accept.")
 
-        if not (1 <= index <= len(self.drafts)):
-            raise IndexError(f"Draft index {index} out of range (1-{len(self.drafts)})")
+        # Find draft by absolute index
+        accepted = None
+        for draft in self.drafts:
+            if draft.index == index:
+                accepted = draft
+                break
 
-        # Get the draft (1=latest = last in storage)
-        storage_idx = len(self.drafts) - index
-        accepted = self.drafts[storage_idx]
+        if accepted is None:
+            valid = [d.index for d in self.drafts]
+            raise IndexError(f"Draft index {index} not found. Valid indices: {valid}")
 
-        # Add to history: user message then accepted response
+        # Add to history: user message then accepted response (with draft index)
         self.history.append(HistoryEntry(
             role='user',
             iter=self.awaiting.iter,
@@ -237,6 +270,7 @@ class DialoguePool:
             iter=accepted.iter,
             time=accepted.time,
             text=accepted.text,
+            accepted_draft_index=accepted.index,
         ))
 
         # Trim history (keep last N pairs = 2N entries)
@@ -250,17 +284,43 @@ class DialoguePool:
 
         return accepted
 
-    def get_drafts_for_display(self) -> list[tuple[int, Draft]]:
+    def get_latest_draft(self) -> Optional[Draft]:
+        """Get the most recent draft, or None if no drafts."""
+        return self.drafts[-1] if self.drafts else None
+
+    def get_drafts_for_display(
+        self,
+        max_chars: int = 2000,
+        max_count: int = 16,
+    ) -> list[Draft]:
         """
-        Get drafts for display (newest first, 1-indexed).
+        Get drafts for display to mind, newest first, within limits.
+
+        Display stops when EITHER limit is reached:
+        - max_chars: total character count
+        - max_count: number of drafts
 
         Returns:
-            List of (display_index, draft) tuples
+            List of drafts (newest first) that fit within limits
         """
         result = []
-        for i, draft in enumerate(reversed(self.drafts)):
-            result.append((i + 1, draft))
+        total_chars = 0
+
+        # Iterate newest first
+        for draft in reversed(self.drafts):
+            if len(result) >= max_count:
+                break
+            if total_chars + len(draft.text) > max_chars and result:
+                # Would exceed char limit and we have at least one
+                break
+            result.append(draft)
+            total_chars += len(draft.text)
+
         return result
+
+    def get_all_drafts(self) -> list[Draft]:
+        """Get all drafts (oldest first) for full display to user."""
+        return list(self.drafts)
 
     def get_history(self) -> list[HistoryEntry]:
         """Get conversation history (oldest first)."""
