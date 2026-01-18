@@ -32,13 +32,15 @@ The mind is already adapting behavior based on inferred presence. Making it expl
 | `reviewing` | User observing drafts | Refine toward acceptance, respect signal channel |
 | `engaged` | Active dialogue | Rapid iteration, user will respond quickly |
 
-### User Status Line
+### User Signal
 
-Short text updates from user, visible as rolling history:
-- User updates any time
-- Last N=3 visible to mind
-- Each stamped with relative age (iterations since update)
-- Provides context/intent without requiring full message
+Single schema with all user state fields:
+- `presence`: absent | reviewing | engaged
+- `status`: short text (context/intent)
+- `time`: user's local time (day + HH:MM)
+- Indexed by iteration number (one entry per iter max)
+- Only stored when user makes a change
+- Last N=3 entries visible to mind
 
 ---
 
@@ -46,7 +48,7 @@ Short text updates from user, visible as rolling history:
 
 ### Input Format
 
-Status appears in meta block at **start** of input, with minimal reminder at **end** for re-orientation:
+User signal appears in meta block at **start** of input, with minimal reminder at **end** for re-orientation:
 
 ```yaml
 # === START ===
@@ -54,14 +56,19 @@ meta:
   self: mind_0
   iter: 247
   user_time: 2026-01-18T10:30:00+11:00
-  user_presence: reviewing
-  user_status:
-    - text: "focusing on signal channel impl"
-      age: 2
-    - text: "back in 30, keep iterating"
-      age: 15
-    - text: "wrapping up for today soon"
-      age: 42
+  user_signal:  # last 3 entries, indexed by iter
+    - iter: 245
+      presence: reviewing
+      status: "focusing on signal channel impl"
+      time: "Sat 10:30"
+    - iter: 230
+      presence: absent
+      status: "back in 30"
+      time: "Sat 10:00"
+    - iter: 188
+      presence: engaged
+      status: "wrapping up soon"
+      time: "Fri 23:45"
 
 thinking_pool:
   - |  # age: 5, cluster: {id: 3, size: 8}
@@ -78,17 +85,27 @@ dialogue:
 # === END (re-orientation after long context) ===
 orientation:
   iter: 247
-  user_presence: reviewing
-  user_status: "focusing on signal channel impl"
+  user_signal:  # latest only
+    presence: reviewing
+    status: "focusing on signal channel impl"
+    time: "Sat 10:30"
 ```
+
+**Time format:** `Day HH:MM` (user's local time, no date). Lets mind infer:
+- Morning/afternoon/evening/night
+- Weekend vs weekday
+- Fresh start vs late session
 
 ### System Prompt Updates
 
 Add section describing presence states and expected behavior:
 
 ```
-# USER PRESENCE:
-#   The user's current attention state is provided in meta.user_presence:
+# USER SIGNAL:
+#   The user's attention state and status are provided in meta.user_signal.
+#   Each entry has: presence, status, age (iterations), time (local day+time).
+#
+#   Presence states:
 #
 #   absent:
 #     - User is away, not observing the draft buffer
@@ -107,10 +124,15 @@ Add section describing presence states and expected behavior:
 #     - Rapid iteration expected
 #     - Direct, focused responses
 #
-# USER STATUS:
-#   Short updates from user providing context/intent.
-#   Visible as meta.user_status with age stamps.
-#   More recent = more relevant. Use to orient your focus.
+#   Status text:
+#     - Short user updates providing context/intent
+#     - May carry over across presence changes if still relevant
+#     - More recent = more relevant
+#
+#   Time context:
+#     - Day + local time (e.g., "Sat 10:30", "Fri 23:45")
+#     - Infer user state: morning freshness, late night, weekend, etc.
+#     - No date shown - just relative patterns matter
 ```
 
 ---
@@ -122,33 +144,39 @@ Add section describing presence states and expected behavior:
 Add to `session.yaml`:
 
 ```yaml
-user_presence: reviewing  # absent | reviewing | engaged
-user_status:
+user_signal:  # append-only, indexed by iter
   - iter: 245
-    text: "focusing on signal channel impl"
-  - iter: 232
-    text: "back in 30, keep iterating"
-  - iter: 205
-    text: "wrapping up for today soon"
+    presence: reviewing
+    status: "focusing on signal channel impl"
+    time: "Sat 10:30"
+  - iter: 230
+    presence: absent
+    status: "back in 30"
+    time: "Sat 10:00"
+  - iter: 188
+    presence: engaged
+    status: "wrapping up soon"
+    time: "Fri 23:45"
 ```
 
-Storage: keep last 10 status updates (for history/analysis)
-Display: show last 3 to mind
+- Storage: keep all (append-only history)
+- Display: last 3 to mind
+- One entry per iter max (user can only update once per iter)
 
 ---
 
 ## CLI
 
 ```bash
-mind presence                    # Show current presence state
-mind presence absent             # Set to absent
-mind presence reviewing          # Set to reviewing
-mind presence engaged            # Set to engaged
-mind presence a|r|e              # Short forms
-
-mind status                      # Show recent status lines
-mind status "working on X"       # Add new status line
+mind signal                              # Show current signal (latest entry)
+mind signal -a                           # Show all signal history
+mind signal "status text"                # Update status (keeps current presence)
+mind signal -p reviewing                 # Update presence (keeps current status)
+mind signal -p engaged "deep focus now"  # Update both
+mind signal -p a|r|e                     # Short presence forms
 ```
+
+Single command, updates recorded at current iteration with user's local time.
 
 ---
 
