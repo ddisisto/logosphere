@@ -148,9 +148,18 @@ class ThinkingPool:
         self.thoughts.append(thought)
         return vector_id
 
-    def sample(self, k: int) -> tuple[list[Thought], list[int]]:
+    def sample(
+        self,
+        k: int,
+        max_chars: Optional[int] = None,
+    ) -> tuple[list[Thought], list[int]]:
         """
-        Sample k thoughts from active pool (FIFO tail).
+        Sample up to k thoughts from active pool (FIFO tail), within char limit.
+
+        Args:
+            k: Maximum number of thoughts to sample
+            max_chars: Optional character limit. If provided, stops adding thoughts
+                      when the limit would be exceeded (always includes at least one).
 
         Returns:
             (thoughts, vector_ids)
@@ -162,8 +171,26 @@ class ThinkingPool:
         sample_size = min(k, len(indices))
         sampled_indices = random.sample(indices, sample_size)
 
-        thoughts = [self.thoughts[i] for i in sampled_indices]
-        return thoughts, sampled_indices
+        # If no char limit, return all sampled thoughts
+        if max_chars is None:
+            thoughts = [self.thoughts[i] for i in sampled_indices]
+            return thoughts, sampled_indices
+
+        # Apply char limit (same pattern as drafts)
+        result_thoughts = []
+        result_indices = []
+        total_chars = 0
+
+        for idx in sampled_indices:
+            thought = self.thoughts[idx]
+            if total_chars + len(thought.text) > max_chars and result_thoughts:
+                # Would exceed char limit and we have at least one
+                break
+            result_thoughts.append(thought)
+            result_indices.append(idx)
+            total_chars += len(thought.text)
+
+        return result_thoughts, result_indices
 
     def get(self, vector_id: int) -> Optional[Thought]:
         """Get thought by vector_id."""

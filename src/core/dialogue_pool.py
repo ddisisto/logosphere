@@ -336,19 +336,50 @@ class DialoguePool:
         """Get all conversation history (oldest first)."""
         return list(self.history)
 
-    def get_history_for_display(self, max_entries: int) -> list[HistoryEntry]:
+    def get_history_for_display(
+        self,
+        max_entries: int,
+        max_chars: Optional[int] = None,
+    ) -> list[HistoryEntry]:
         """
-        Get history for display to mind, limited to last N entries.
+        Get history for display to mind, within limits.
+
+        Display stops when EITHER limit is reached:
+        - max_entries: number of entries
+        - max_chars: total character count
 
         Args:
             max_entries: Maximum number of entries to return
+            max_chars: Optional maximum total characters
 
         Returns:
             List of history entries (oldest first within the returned subset)
         """
+        # First apply count limit (take from end)
         if len(self.history) <= max_entries:
-            return list(self.history)
-        return list(self.history[-max_entries:])
+            candidates = list(self.history)
+        else:
+            candidates = list(self.history[-max_entries:])
+
+        # If no char limit, return all candidates
+        if max_chars is None:
+            return candidates
+
+        # Apply char limit (newest first, then reverse to oldest first)
+        result = []
+        total_chars = 0
+
+        # Work backwards from newest to apply char limit
+        for entry in reversed(candidates):
+            if total_chars + len(entry.text) > max_chars and result:
+                # Would exceed char limit and we have at least one
+                break
+            result.append(entry)
+            total_chars += len(entry.text)
+
+        # Reverse back to oldest-first order
+        result.reverse()
+        return result
 
     # -------------------------------------------------------------------------
     # Exchange ID and Draft Archive

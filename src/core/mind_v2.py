@@ -25,8 +25,8 @@ from .dialogue_pool import DialoguePool, Draft, HistoryEntry, UserMessage
 # ============================================================================
 
 def load_system_prompt() -> str:
-    """Load system prompt from docs/system_prompt_v1.2.md."""
-    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.2.md'
+    """Load system prompt from docs/system_prompt_v1.3.md."""
+    prompt_path = Path(__file__).parent.parent.parent / 'docs' / 'system_prompt_v1.3.md'
     if prompt_path.exists():
         return prompt_path.read_text()
     raise FileNotFoundError(f"System prompt not found at {prompt_path}")
@@ -131,9 +131,10 @@ def format_input(
     history_for_display: list[HistoryEntry],
     cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id, size}
     user_time: Optional[str] = None,
+    limits: Optional[dict] = None,  # {thoughts: {chars, count}, history: {...}, drafts: {...}}
 ) -> str:
     """
-    Format input for Mind invocation (v1.2 protocol).
+    Format input for Mind invocation (v1.3 protocol).
 
     Args:
         mind_id: Identity of this mind (e.g., "mind_0")
@@ -144,18 +145,26 @@ def format_input(
         history_for_display: Pre-filtered history (oldest first, within display limits)
         cluster_assignments: Optional cluster info per thought {cluster_id, size}
         user_time: Optional timestamp override
+        limits: Optional display limits to show in meta section
 
     Returns:
-        YAML string for Mind input with dialogue section
+        YAML string for Mind input (v1.3: meta, thoughts, dialogue, drafts, orientation)
     """
     if user_time is None:
         user_time = datetime.now(timezone.utc).isoformat()
 
-    # Build meta section
+    # Build meta section with limits
     meta_yaml = f'''meta:
   self: {mind_id}
   iter: {current_iter}
   user_time: {user_time}'''
+
+    if limits:
+        meta_yaml += f'''
+  limits:
+    thoughts: {{chars: {limits['thoughts']['chars']}, count: {limits['thoughts']['count']}}}
+    history: {{chars: {limits['history']['chars']}, count: {limits['history']['count']}}}
+    drafts: {{chars: {limits['drafts']['chars']}, count: {limits['drafts']['count']}}}'''
 
     # Build thinking pool with custom comment format
     thought_items = []
@@ -171,13 +180,13 @@ def format_input(
 
     # Build dialogue section (use display-limited history)
     if dialogue_pool.is_drafting:
-        # Drafting state: show history (if any) + awaiting message + drafts
+        # Drafting state: show history (if any) + awaiting message
         dialogue_yaml = 'dialogue:'
 
         # Include history for context
         if history_for_display:
             history_items = [format_history_entry_yaml(h, current_iter) for h in history_for_display]
-            dialogue_yaml += '\n  # Conversation history for context\n  history:\n' + '\n'.join(history_items)
+            dialogue_yaml += '\n  # Conversation history for context (oldest first, within display limits)\n  history:\n' + '\n'.join(history_items)
 
         # Show awaiting message
         awaiting = dialogue_pool.awaiting
@@ -193,33 +202,37 @@ def format_input(
     text: |
 {awaiting_indented}'''
 
-        # Add drafts if any (displayed newest first, reversed back to oldest-first for YAML)
+        # Build drafts as separate top-level section (v1.3)
+        drafts_yaml = ''
         if drafts_for_display:
             # drafts_for_display is newest-first; reverse to oldest-first for display
             draft_items = [format_draft_yaml(d, current_iter) for d in reversed(drafts_for_display)]
             total_drafts = len(dialogue_pool.drafts)
             shown = len(drafts_for_display)
             if shown < total_drafts:
-                dialogue_yaml += f'''
-
-  # Your draft responses ({shown} of {total_drafts} shown, most recent = last in list)
-  drafts:
+                drafts_yaml = f'''# Draft responses ({shown} of {total_drafts} shown, most recent = last in list)
+drafts:
 ''' + '\n'.join(draft_items)
             else:
-                dialogue_yaml += '''
-
-  # Your draft responses (most recent = last in list)
-  drafts:
+                drafts_yaml = '''# Draft responses (most recent = last in list)
+drafts:
 ''' + '\n'.join(draft_items)
 
+        # Build orientation footer (v1.3)
+        orientation_yaml = f'''# Re-orientation after long context
+orientation:
+  iter: {current_iter}'''
+
+        return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n\n{drafts_yaml}\n{orientation_yaml}\n'
+
     else:
-        # Idle state: show history only
+        # Idle state: show history only (no drafts, no orientation needed)
         dialogue_yaml = 'dialogue:\n  # No pending user message. Conversation history for context.'
         if history_for_display:
             history_items = [format_history_entry_yaml(h, current_iter) for h in history_for_display]
             dialogue_yaml += '\n  history:\n' + '\n'.join(history_items)
 
-    return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n'
+        return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n'
 
 
 # ============================================================================
@@ -337,7 +350,7 @@ def invoke_mind(
     Invoke Mind with YAML input/output.
 
     Args:
-        system_prompt: Protocol spec (from docs/system_prompt_v1.2.md)
+        system_prompt: Protocol spec (from docs/system_prompt_v1.3.md)
         user_input: Formatted YAML input
         model: Model to use
         token_limit: Max tokens for response

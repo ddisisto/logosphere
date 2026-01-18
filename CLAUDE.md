@@ -26,7 +26,7 @@ logosphere/
 │   │   ├── thinking_pool.py   # Embedded thoughts with FIFO rotation
 │   │   ├── dialogue_pool.py   # Draft-based dialogue (awaiting/drafts/history)
 │   │   ├── session_v2.py      # Dual-pool session management
-│   │   ├── mind_v2.py         # YAML-based LLM invocation (v1.2 protocol)
+│   │   ├── mind_v2.py         # YAML-based LLM invocation (v1.3 protocol)
 │   │   ├── embedding_client.py # OpenRouter embedding API
 │   │   └── intervention_log.py # Append-only audit trail
 │   ├── mind/
@@ -46,7 +46,7 @@ logosphere/
 │   ├── logos.py               # Legacy CLI (v1)
 │   └── extract_session.py     # Session extraction/forking utility
 └── docs/
-    ├── system_prompt_v1.2.md  # Current Mind protocol spec
+    ├── system_prompt_v1.3.md  # Current Mind protocol spec
     ├── draft-dialogue-design.md # Draft dialogue design doc
     └── ...                    # Other design docs
 ```
@@ -119,7 +119,7 @@ Notes:
 mind config                            # Show current config
 mind config --json                     # JSON output
 mind config --set model=anthropic/claude-haiku-4.5
-mind config --set k_samples=10
+mind config --set thought_display_count=15
 ```
 
 ### Clustering
@@ -183,9 +183,9 @@ A session is a directory containing:
 
 Sessions are linear (no branching). Fork sessions by copying with `extract_session.py`.
 
-### Mind Protocol (v1.2)
+### Mind Protocol (v1.3)
 
-YAML-based input/output format.
+YAML-based input/output format. Block order: meta → thinking_pool → dialogue → drafts → orientation.
 
 **Input (drafting state with history):**
 ```yaml
@@ -193,6 +193,10 @@ meta:
   self: mind_0
   iter: 247
   user_time: 2026-01-15T14:30:00+11:00
+  limits:
+    thoughts: {chars: 3000, count: 10}
+    history: {chars: 4000, count: 20}
+    drafts: {chars: 2000, count: 16}
 
 thinking_pool:
   - |  # age: 50, cluster: {id: 3, size: 8}
@@ -214,11 +218,17 @@ dialogue:
     age: 42
     text: |
       user's message awaiting response
-  drafts:
-    - |  # age: 38, user_seen: true
-      first draft response
-    - |  # age: 15, user_seen: false
-      latest draft response
+
+# Draft responses (most recent = last in list)
+drafts:
+  - |  # index: 1, age: 38, user_seen: true
+    first draft response
+  - |  # index: 2, age: 15, user_seen: false
+    latest draft response
+
+# Re-orientation after long context
+orientation:
+  iter: 247
 ```
 
 **Output:**
@@ -249,13 +259,21 @@ Stable, persistent cluster assignments (see `docs/incremental-clustering-design.
 
 ## Key Parameters
 
+### Display Limits (Unified Pattern)
+
+All inputs to the mind use a consistent `{resource}_display_chars` + `{resource}_display_count` pattern. Count acts as upper bound, char limit controls context size.
+
+| Resource | Char Limit | Count Limit | Effect |
+|----------|------------|-------------|--------|
+| Thoughts | `thought_display_chars: 3000` | `thought_display_count: 10` | Sampled thoughts shown to mind |
+| Drafts | `draft_display_chars: 2000` | `draft_display_count: 16` | Recent drafts shown to mind |
+| History | `history_display_chars: 4000` | `history_display_count: 20` | Conversation history shown to mind |
+
+### Other Parameters
+
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `k_samples` | 5 | Thoughts sampled per iteration |
-| `active_pool_size` | 50 | Size of thinking pool |
-| `draft_display_chars` | 2000 | Max chars of drafts to show mind |
-| `draft_display_count` | 16 | Max number of drafts to show mind |
-| `history_display_pairs` | 10 | Conversation pairs to show mind |
+| `active_pool_size` | 50 | Size of thinking pool (FIFO storage, not display) |
 | `model` | claude-haiku-4.5 | LLM for mind invocations |
 | `token_limit` | 4000 | Max tokens for LLM response |
 | `min_cluster_size` | 3 | HDBSCAN threshold for new clusters |
@@ -292,11 +310,13 @@ Every action logged. Cluster evolution trackable.
 ```yaml
 iteration: 247
 config:
-  k_samples: 5
+  thought_display_chars: 3000
+  thought_display_count: 10
   active_pool_size: 50
   draft_display_chars: 2000
   draft_display_count: 16
-  history_display_pairs: 10
+  history_display_chars: 4000
+  history_display_count: 20
   model: anthropic/claude-haiku-4.5
   token_limit: 4000
   embedding_model: openai/text-embedding-3-small

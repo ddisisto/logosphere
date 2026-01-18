@@ -34,15 +34,17 @@ class SessionConfig:
 
     def __init__(
         self,
-        # Sampling
-        k_samples: int = 5,  # Thoughts to sample per iteration
+        # Thought display limits (sampled from FIFO pool)
+        thought_display_chars: int = 3000,  # Max chars of sampled thoughts
+        thought_display_count: int = 10,  # Max thoughts to sample per iteration
         # Pool parameters
         active_pool_size: int = 50,
         # Draft display limits (storage is unlimited)
         draft_display_chars: int = 2000,  # Show drafts up to this many chars
         draft_display_count: int = 16,  # Show at most this many drafts
-        # History display limit (storage is unlimited)
-        history_display_pairs: int = 10,  # Show at most this many pairs to mind
+        # History display limits (storage is unlimited)
+        history_display_chars: int = 4000,  # Max chars of history to show mind
+        history_display_count: int = 20,  # Max history entries to show mind
         # LLM
         model: str = "anthropic/claude-haiku-4.5",
         token_limit: int = 4000,
@@ -53,11 +55,13 @@ class SessionConfig:
         min_cluster_size: int = 3,
         centroid_match_threshold: float = 0.3,
     ):
-        self.k_samples = k_samples
+        self.thought_display_chars = thought_display_chars
+        self.thought_display_count = thought_display_count
         self.active_pool_size = active_pool_size
         self.draft_display_chars = draft_display_chars
         self.draft_display_count = draft_display_count
-        self.history_display_pairs = history_display_pairs
+        self.history_display_chars = history_display_chars
+        self.history_display_count = history_display_count
         self.model = model
         self.token_limit = token_limit
         self.embedding_model = embedding_model
@@ -68,11 +72,13 @@ class SessionConfig:
     def to_dict(self) -> dict:
         """Convert to YAML-serializable dict."""
         return {
-            'k_samples': self.k_samples,
+            'thought_display_chars': self.thought_display_chars,
+            'thought_display_count': self.thought_display_count,
             'active_pool_size': self.active_pool_size,
             'draft_display_chars': self.draft_display_chars,
             'draft_display_count': self.draft_display_count,
-            'history_display_pairs': self.history_display_pairs,
+            'history_display_chars': self.history_display_chars,
+            'history_display_count': self.history_display_count,
             'model': self.model,
             'token_limit': self.token_limit,
             'embedding_model': self.embedding_model,
@@ -83,8 +89,25 @@ class SessionConfig:
 
     @classmethod
     def from_dict(cls, data: dict) -> SessionConfig:
-        """Create from dict."""
-        return cls(**{k: v for k, v in data.items() if k in cls.__init__.__code__.co_varnames})
+        """Create from dict with migration support for old param names."""
+        # Create a copy to avoid modifying the input
+        migrated = dict(data)
+
+        # Migration: k_samples -> thought_display_count
+        if 'k_samples' in migrated and 'thought_display_count' not in migrated:
+            migrated['thought_display_count'] = migrated.pop('k_samples')
+        elif 'k_samples' in migrated:
+            del migrated['k_samples']
+
+        # Migration: history_display_pairs -> history_display_count (multiply by 2)
+        if 'history_display_pairs' in migrated and 'history_display_count' not in migrated:
+            migrated['history_display_count'] = migrated.pop('history_display_pairs') * 2
+        elif 'history_display_pairs' in migrated:
+            del migrated['history_display_pairs']
+
+        # Filter to only valid params
+        valid_params = cls.__init__.__code__.co_varnames
+        return cls(**{k: v for k, v in migrated.items() if k in valid_params})
 
 
 class SessionV2:
@@ -201,9 +224,12 @@ class SessionV2:
             cluster=cluster,
         )
 
-    def sample_thoughts(self, k: int) -> tuple[list[Thought], list[int]]:
-        """Sample k thoughts from thinking pool."""
-        return self.thinking_pool.sample(k)
+    def sample_thoughts(self) -> tuple[list[Thought], list[int]]:
+        """Sample thoughts from thinking pool within display limits."""
+        return self.thinking_pool.sample(
+            k=self.config.thought_display_count,
+            max_chars=self.config.thought_display_chars,
+        )
 
     # -------------------------------------------------------------------------
     # Dialogue pool operations
@@ -268,8 +294,10 @@ class SessionV2:
 
     def get_history_for_mind(self) -> list[HistoryEntry]:
         """Get display-limited history for mind input."""
-        max_entries = self.config.history_display_pairs * 2
-        return self.dialogue_pool.get_history_for_display(max_entries)
+        return self.dialogue_pool.get_history_for_display(
+            max_entries=self.config.history_display_count,
+            max_chars=self.config.history_display_chars,
+        )
 
     # -------------------------------------------------------------------------
     # Clustering compatibility

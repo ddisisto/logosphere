@@ -87,8 +87,8 @@ class MindRunner:
                 "Send a message first with 'mind message'."
             )
 
-        # 1. Sample thoughts from thinking pool
-        thoughts, sampled_ids = self.session.sample_thoughts(self.session.config.k_samples)
+        # 1. Sample thoughts from thinking pool (uses config limits)
+        thoughts, sampled_ids = self.session.sample_thoughts()
 
         # 2. Get cluster assignments and sizes for sampled thoughts
         cluster_assignments = {}
@@ -117,7 +117,15 @@ class MindRunner:
         drafts_for_display = self.session.get_drafts_for_mind()
         history_for_display = self.session.get_history_for_mind()
 
-        # 4. Format YAML input with dialogue pool
+        # 4. Build limits dict for mind context (v1.3)
+        cfg = self.session.config
+        limits = {
+            'thoughts': {'chars': cfg.thought_display_chars, 'count': cfg.thought_display_count},
+            'history': {'chars': cfg.history_display_chars, 'count': cfg.history_display_count},
+            'drafts': {'chars': cfg.draft_display_chars, 'count': cfg.draft_display_count},
+        }
+
+        # 5. Format YAML input with dialogue pool (v1.3 format)
         user_input = format_input(
             mind_id=self.config.mind_id,
             current_iter=self.session.iteration,
@@ -126,6 +134,7 @@ class MindRunner:
             drafts_for_display=drafts_for_display,
             history_for_display=history_for_display,
             cluster_assignments=cluster_assignments,
+            limits=limits,
         )
 
         if self.config.debug:
