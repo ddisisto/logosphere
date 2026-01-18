@@ -221,9 +221,9 @@ class SessionV2:
         self.iteration += 1
         self.dialogue_pool.send_message(text=text, iter=self.iteration)
 
-    def add_draft(self, text: str) -> None:
+    def add_draft(self, text: str, seen: bool = False) -> None:
         """Mind produces a draft response."""
-        self.dialogue_pool.add_draft(text=text, iter=self.iteration)
+        self.dialogue_pool.add_draft(text=text, iter=self.iteration, seen=seen)
 
     def accept_draft(self, index: int = 1) -> Draft:
         """

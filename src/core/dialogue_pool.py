@@ -177,11 +177,16 @@ class DialoguePool:
         )
         self.drafts = []
 
-    def add_draft(self, text: str, iter: int) -> int:
+    def add_draft(self, text: str, iter: int, seen: bool = False) -> int:
         """
         Mind produces a draft response.
 
         All drafts are preserved with absolute indices.
+
+        Args:
+            text: Draft content
+            iter: Current iteration number
+            seen: Mark as seen immediately (True when user is observing)
 
         Returns:
             The absolute index of the new draft
@@ -198,7 +203,7 @@ class DialoguePool:
             iter=iter,
             time=datetime.now(timezone.utc).isoformat(),
             text=text,
-            seen=False,
+            seen=seen,
         )
 
         self.drafts.append(draft)

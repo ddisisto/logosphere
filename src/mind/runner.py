@@ -67,9 +67,12 @@ class MindRunner:
         # Load system prompt
         self.system_prompt = load_system_prompt()
 
-    def _step_inner(self) -> StepResult:
+    def _step_inner(self, observe: bool = True) -> StepResult:
         """
         Execute single iteration (internal implementation).
+
+        Args:
+            observe: User presence mode. If True, drafts are marked as seen immediately.
 
         Raises:
             RuntimeError: If not in drafting state (no awaiting message)
@@ -188,12 +191,13 @@ class MindRunner:
         draft_added = False
         hard_signal = False
         if output.draft:
-            self.session.add_draft(output.draft)
+            self.session.add_draft(output.draft, seen=observe)
             draft_added = True
 
             if self.config.verbose:
+                seen_note = " [seen]" if observe else ""
                 preview = output.draft[:60] + "..." if len(output.draft) > 60 else output.draft
-                print(f"  [draft] {preview}")
+                print(f"  [draft]{seen_note} {preview}")
         else:
             # Hard signal: no draft output when drafting with existing drafts
             # Mind is saying "look at what's there"
@@ -273,7 +277,7 @@ class MindRunner:
             print("-" * 40)
 
         for i in range(limit):
-            result = self._step_inner()
+            result = self._step_inner(observe=observe)
             results.append(result)
 
             # Check stop conditions (only when running until condition)
