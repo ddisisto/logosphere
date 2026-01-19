@@ -109,15 +109,18 @@ CLI and TUI both call these, handle output differently.
 3. ✓ Create `src/mind/events.py` with EventEmitter + event dataclasses
 4. ✓ Runner emits events alongside verbose prints
 
-### Phase 2: Basic TUI Shell
-1. Textual app with layout structure
-2. Static panels (no live data)
-3. Session loading
+### Phase 2: Basic TUI Shell ✓ COMPLETE
+1. ✓ Textual app with layout structure (3:1 main/sidebar)
+2. ✓ Real data in all views (DraftBufferView, HistoryView, StatusPanel)
+3. ✓ Session loading from `~/.mind_session`
+4. ✓ View toggle (`h` key) between drafts and history
+5. ✓ Auto-set presence to "reviewing" on launch
+6. ✓ Entry point: `scripts/tui.py`
 
 ### Phase 3: Live Views
-1. DraftBufferView with real data
-2. StatusPanel with session state
-3. HistoryView toggle
+1. Views update when session changes (reactive)
+2. StatusPanel signal_state from runner (currently placeholder)
+3. Refresh on external session changes
 
 ### Phase 4: Iteration Control
 1. Run/Pause controls
@@ -148,9 +151,14 @@ CLI and TUI both call these, handle output differently.
 - `textual` - TUI framework
 - Existing: session_v2, dialogue_pool, runner
 
-## Open Questions
+## Design Decisions
 
-- Draft buffer: show all or limit display like mind sees?
-- IterationLog: how many iterations to retain?
-- Message input: inline or modal?
-- Should TUI auto-set presence to "reviewing" on launch?
+Resolved during Phase 2:
+
+- **Draft buffer display**: Same config limits as `format_input` (user sees what model sees)
+- **IterationLog retention**: 3 entries, latest at top, lazy-load scroll later
+- **Message input**: Modal, required after accept/before run, unavailable otherwise
+- **Auto-presence**: Yes, set to "reviewing" on TUI launch
+- **Session selection**: Follow CLI pattern (`~/.mind_session`)
+- **Threading**: Textual `@work` decorator for runner (Phase 4)
+- **Error display**: Blocking modal (Phase 5)
