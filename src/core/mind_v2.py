@@ -1,7 +1,7 @@
 """
 Mind v2 - YAML-based Mind invocation for Logosphere v2.
 
-Implements the LOGOSPHERE MIND PROTOCOL v1.3:
+Implements the LOGOSPHERE MIND PROTOCOL v1.5:
 - YAML input format (meta + thinking_pool + dialogue + drafts + orientation)
 - Custom comment-based metadata for thoughts
 - YAML output parsing (thoughts + draft)
@@ -18,7 +18,8 @@ from typing import Optional
 import yaml
 
 from .thinking_pool import Thought
-from .dialogue_pool import DialoguePool, Draft, HistoryEntry, UserMessage
+from .draft_store import Draft
+from .message_store import Message
 from .session_v2 import UserSignal
 
 
@@ -101,9 +102,9 @@ def format_draft_yaml(draft: Draft, current_iter: int) -> str:
     return f'    - |  # index: {draft.index}, age: {age}, user_seen: {seen_str}\n{indented_text}'
 
 
-def format_history_entry_yaml(entry: HistoryEntry, current_iter: int) -> str:
+def format_message_yaml(message: Message, current_iter: int) -> str:
     """
-    Format a history entry as YAML.
+    Format a message as YAML for history display.
 
     Format:
       - from: user/self
@@ -111,11 +112,11 @@ def format_history_entry_yaml(entry: HistoryEntry, current_iter: int) -> str:
         text: |
           message text
     """
-    age = current_iter - entry.iter
-    role = 'self' if entry.role == 'mind' else entry.role
+    age = current_iter - message.iter
+    role = 'self' if message.role == 'mind' else message.role
 
     # Indent text for YAML block
-    lines = entry.text.split('\n')
+    lines = message.text.split('\n')
     indented_text = '\n'.join('        ' + line for line in lines)
 
     return f'''    - from: {role}
@@ -128,9 +129,11 @@ def format_input(
     mind_id: str,
     current_iter: int,
     thoughts: list[Thought],
-    dialogue_pool: DialoguePool,
+    is_drafting: bool,
+    awaiting_message: Optional[Message],
     drafts_for_display: list[Draft],
-    history_for_display: list[HistoryEntry],
+    total_drafts: int,
+    history_for_display: list[Message],
     cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id, size}
     user_time: Optional[str] = None,
     limits: Optional[dict] = None,  # {thoughts: {chars, count}, history: {...}, drafts: {...}}
@@ -144,8 +147,10 @@ def format_input(
         mind_id: Identity of this mind (e.g., "mind_0")
         current_iter: Current iteration number
         thoughts: Sampled thoughts from thinking pool
-        dialogue_pool: Dialogue pool with awaiting/drafts (history passed separately)
+        is_drafting: Whether session is in drafting state
+        awaiting_message: User message awaiting response (if drafting)
         drafts_for_display: Pre-filtered drafts (newest first, within display limits)
+        total_drafts: Total number of drafts (for "N of M shown" message)
         history_for_display: Pre-filtered history (oldest first, within display limits)
         cluster_assignments: Optional cluster info per thought {cluster_id, size}
         user_time: Optional timestamp override
@@ -201,19 +206,18 @@ def format_input(
         thinking_yaml += '\n' + '\n'.join(thought_items)
 
     # Build dialogue section (use display-limited history)
-    if dialogue_pool.is_drafting:
+    if is_drafting and awaiting_message is not None:
         # Drafting state: show history (if any) + awaiting message
         dialogue_yaml = 'dialogue:'
 
         # Include history for context
         if history_for_display:
-            history_items = [format_history_entry_yaml(h, current_iter) for h in history_for_display]
+            history_items = [format_message_yaml(h, current_iter) for h in history_for_display]
             dialogue_yaml += '\n  # Conversation history for context (oldest first, within display limits)\n  history:\n' + '\n'.join(history_items)
 
         # Show awaiting message
-        awaiting = dialogue_pool.awaiting
-        awaiting_age = current_iter - awaiting.iter
-        awaiting_lines = awaiting.text.split('\n')
+        awaiting_age = current_iter - awaiting_message.iter
+        awaiting_lines = awaiting_message.text.split('\n')
         awaiting_indented = '\n'.join('      ' + line for line in awaiting_lines)
 
         dialogue_yaml += f'''
@@ -229,7 +233,6 @@ def format_input(
         if drafts_for_display:
             # drafts_for_display is newest-first; reverse to oldest-first for display
             draft_items = [format_draft_yaml(d, current_iter) for d in reversed(drafts_for_display)]
-            total_drafts = len(dialogue_pool.drafts)
             shown = len(drafts_for_display)
             if shown < total_drafts:
                 drafts_yaml = f'''# Draft responses ({shown} of {total_drafts} shown, most recent = last in list)
@@ -262,7 +265,7 @@ orientation:
         # Idle state: show history only (no drafts, no orientation needed)
         dialogue_yaml = 'dialogue:\n  # No pending user message. Conversation history for context.'
         if history_for_display:
-            history_items = [format_history_entry_yaml(h, current_iter) for h in history_for_display]
+            history_items = [format_message_yaml(h, current_iter) for h in history_for_display]
             dialogue_yaml += '\n  history:\n' + '\n'.join(history_items)
 
         return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n'

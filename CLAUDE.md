@@ -24,13 +24,17 @@ logosphere/
 ├── src/
 │   ├── core/
 │   │   ├── thinking_pool.py   # Embedded thoughts with FIFO rotation
-│   │   ├── dialogue_pool.py   # Draft-based dialogue (awaiting/drafts/history)
-│   │   ├── session_v2.py      # Dual-pool session management
+│   │   ├── message_store.py   # Append-only message storage (user + mind)
+│   │   ├── draft_store.py     # Append-only draft storage (0-indexed per message)
+│   │   ├── session_v2.py      # Session management (thinking + messages + drafts)
 │   │   ├── mind_v2.py         # YAML-based LLM invocation (v1.5 protocol)
 │   │   ├── embedding_client.py # OpenRouter embedding API
+│   │   ├── lock.py            # Session locking for TUI/CLI coordination
 │   │   └── intervention_log.py # Append-only audit trail
 │   ├── mind/
 │   │   ├── runner.py          # Core loop: sample → mind → embed → cluster
+│   │   ├── ops.py             # Shared operations for CLI and TUI
+│   │   ├── events.py          # Event emitter for UI updates
 │   │   └── config.py          # Runtime configuration
 │   ├── logos/
 │   │   ├── clustering/        # Incremental clustering package
@@ -43,11 +47,12 @@ logosphere/
 │   └── tui/                   # Chat TUI interface
 ├── scripts/
 │   ├── mind.py                # Main CLI (v2)
+│   ├── tui.py                 # TUI entry point
 │   ├── logos.py               # Legacy CLI (v1)
 │   └── extract_session.py     # Session extraction/forking utility
 └── docs/
     ├── system_prompt_v1.5.md  # Current Mind protocol spec
-    ├── draft-dialogue-design.md # Draft dialogue design doc
+    ├── dialogue-v2-design.md  # Dialogue data model design
     └── ...                    # Other design docs
 ```
 
@@ -101,17 +106,17 @@ mind message -f prompt.md              # Send from file
 cat prompt.md | mind message           # Send via pipe
 mind drafts                            # Show current drafts (newest first)
 mind drafts seen                       # Mark all drafts as seen
-mind drafts seen 1 3                   # Mark specific drafts as seen
-mind drafts archive                    # List all archived exchanges
-mind drafts archive exc_42_000         # Show all drafts for an exchange
+mind drafts seen 0 2                   # Mark specific drafts as seen (0-indexed)
+mind drafts show 0                     # Show full text of draft #0
 mind accept                            # Accept latest draft
-mind accept 2                          # Accept specific draft
+mind accept 2                          # Accept draft #2 (0-indexed)
 mind history                           # Show conversation history
 ```
 
 Notes:
 - Cannot send a new message while awaiting response. Must accept a draft first.
 - Cannot run iterations while idle. Must send a message first.
+- Draft indices are 0-based and reset each message round.
 
 ### Configuration
 
@@ -156,14 +161,13 @@ Presence states: `absent` (a), `reviewing` (r), `engaged` (e). Default on init: 
 - FIFO rotation: oldest thoughts displaced when pool is full
 - Minds see: text + age + cluster assignment
 
-**Dialogue Pool** (`dialogue/`)
+**Dialogue** (`messages.yaml` + `drafts.yaml`)
 - Draft-based user ↔ mind communication
-- States: idle (history only) or drafting (awaiting + drafts)
+- States: idle (last message from mind) or drafting (last message from user)
 - User sends message → mind produces drafts → user accepts one
-- Accepted exchanges form conversation history (unlimited storage)
-- All drafts stored (unlimited), but mind sees display-limited subset
-- All drafts archived to `draft_archive.jsonl` when exchange completes
-- Active drafts cleared after archiving; archive is append-only forever
+- Messages: append-only, contains user messages + accepted mind responses
+- Drafts: append-only, 0-indexed per message round, all drafts preserved
+- State derived from last message role (no separate "awaiting" field)
 
 **Signal Channel:**
 - Draft buffer serves as bidirectional communication channel
@@ -189,7 +193,8 @@ Strict mode: iterations only run during drafting state. When idle, user must sen
 A session is a directory containing:
 - `session.yaml` - Iteration counter and config
 - `thinking/` - Thought embeddings and pool state
-- `dialogue/` - Dialogue pool state (awaiting/drafts/history)
+- `messages.yaml` - User messages + accepted mind responses (append-only)
+- `drafts.yaml` - All drafts, 0-indexed per message round (append-only)
 - `clusters/` - Cluster registry and assignments
 - `prompts/` - Raw LLM requests/responses (`{iter:06d}-req.txt`, `{iter:06d}-resp.txt`)
 - `interventions.jsonl` - Audit log of all actions
@@ -346,46 +351,64 @@ config:
   hard_signal_threshold: 3
 ```
 
-### dialogue/pool.yaml
+### messages.yaml
+
+Append-only list of user messages and accepted mind responses:
 
 ```yaml
-awaiting:
-  iter: 245
-  time: 2026-01-15T14:30:00+00:00
+- role: user
+  iter: 5
+  time: "2026-01-15T10:00:00+00:00"
   text: |
-    user's message
-drafts:
-  - iter: 246
-    time: 2026-01-15T14:31:00+00:00
-    text: |
-      draft response
-    seen: true
-history:
-  - role: user
-    iter: 100
-    time: 2026-01-15T10:00:00+00:00
-    text: |
-      earlier message
-  - role: mind
-    iter: 105
-    time: 2026-01-15T10:05:00+00:00
-    text: |
-      earlier response
-    accepted_draft_index: 3
-    draft_archive_id: exc_100_000
+    Hello, how are you?
+
+- role: mind
+  iter: 12
+  time: "2026-01-15T10:05:00+00:00"
+  text: |
+    I'm doing well, thank you.
+  draft_index: 2
+  user_message_iter: 5
+
+- role: user
+  iter: 15
+  time: "2026-01-15T10:10:00+00:00"
+  text: |
+    Great to hear!
 ```
 
-### dialogue/draft_archive.jsonl
+State derivation: if last message is `role: user` → DRAFTING, otherwise → IDLE.
 
-Append-only archive of all drafts from completed exchanges. Each line is a JSON object:
+### drafts.yaml
 
-```json
-{"exchange_id": "exc_100_000", "draft_index": 1, "iter_created": 102, "time_created": "2026-01-15T10:02:00+00:00", "text": "first draft...", "user_seen": true, "accepted": false, "accepted_by_exchange": null}
-{"exchange_id": "exc_100_000", "draft_index": 2, "iter_created": 103, "time_created": "2026-01-15T10:03:00+00:00", "text": "second draft...", "user_seen": true, "accepted": false, "accepted_by_exchange": null}
-{"exchange_id": "exc_100_000", "draft_index": 3, "iter_created": 105, "time_created": "2026-01-15T10:05:00+00:00", "text": "accepted response", "user_seen": true, "accepted": true, "accepted_by_exchange": "exc_100_000"}
+Append-only list of all drafts, 0-indexed per message round:
+
+```yaml
+- user_message_iter: 5
+  index: 0
+  iter: 7
+  time: "2026-01-15T10:01:00+00:00"
+  text: |
+    First draft...
+  seen: false
+
+- user_message_iter: 5
+  index: 1
+  iter: 9
+  time: "2026-01-15T10:02:00+00:00"
+  text: "+1"
+  seen: true
+
+- user_message_iter: 5
+  index: 2
+  iter: 12
+  time: "2026-01-15T10:05:00+00:00"
+  text: |
+    I'm doing well, thank you.
+  seen: true
 ```
 
-Exchange IDs follow the format `exc_{awaiting_iter}_{sequence:03d}` where the sequence handles rare cases of multiple exchanges at the same iteration.
+Draft `index` is 0-based, resets each message round. Query by `user_message_iter` for all drafts for a message.
 
 ---
 

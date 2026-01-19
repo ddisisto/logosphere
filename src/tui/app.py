@@ -1,7 +1,7 @@
 """
 Mind TUI - Textual interface for Logosphere v2.
 
-Phase 3: Single-step iteration with live updates.
+Phase 4: Full interaction (draft selection and acceptance).
 """
 
 from pathlib import Path
@@ -20,6 +20,7 @@ from ..mind.events import EventType, IterationCompleteEvent
 from .panels import IterationLog, StatusPanel
 from .panels.iteration_log import IterationSummary
 from .views import DraftBufferView, HistoryView
+from .views.draft_buffer_view import is_signal
 
 
 # Session tracking file (same as CLI)
@@ -81,6 +82,7 @@ class MindApp(App):
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+c", "quit", "Quit", priority=True, show=False),
         Binding("s", "step_iteration", "Step"),
+        Binding("a", "accept_draft", "Accept"),
         Binding("h", "toggle_view", "Toggle history"),
         Binding("q", "quit", "Quit"),
     ]
@@ -238,6 +240,57 @@ class MindApp(App):
         self._update_controls()
         view_name = "history" if self._showing_history else "drafts"
         self.notify(f"Switched to {view_name} view")
+
+    async def action_accept_draft(self) -> None:
+        """Accept the currently selected draft."""
+        if self._session is None:
+            self.notify("No session loaded")
+            return
+
+        if self._showing_history:
+            self.notify("Switch to drafts view to accept")
+            return
+
+        if not self._session.is_drafting:
+            self.notify("No drafts to accept (session is idle)")
+            return
+
+        # Get selected draft from view
+        try:
+            view = self.query_one("#main-content", DraftBufferView)
+            draft = view.get_selected_draft()
+        except Exception:
+            self.notify("Cannot get selected draft")
+            return
+
+        if draft is None:
+            self.notify("No draft selected")
+            return
+
+        # Block acceptance of signals
+        if is_signal(draft):
+            self.notify("Cannot accept signal drafts", severity="warning")
+            return
+
+        # Accept the draft
+        result = ops.accept_draft(self._session, draft.index)
+        if not result.success:
+            self.notify(f"Error: {result.error}", severity="error")
+            return
+
+        self.notify(f"Accepted draft #{draft.index}")
+
+        # Refresh views - session is now idle
+        await self._mount_main_view()
+        self._update_controls()
+
+        # Update status panel
+        try:
+            status = ops.get_session_status(self._session)
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            status_panel.update_status(status)
+        except Exception:
+            pass
 
     def action_step_iteration(self) -> None:
         """Run a single iteration in the background."""

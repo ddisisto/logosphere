@@ -40,7 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.session_v2 import SessionV2, SessionConfig
-from src.core.dialogue_pool import Draft
+from src.core.draft_store import Draft
 from src.core.lock import SessionLock, check_lock, LockError
 from src.mind import MindRunner, MindConfig, ops
 
@@ -155,11 +155,12 @@ def cmd_status(args) -> int:
 
     # Show dialogue state
     if session.is_drafting:
-        awaiting = session.dialogue_pool.awaiting
+        awaiting = session.get_awaiting_message()
         all_drafts = session.get_all_drafts()
         print(f"\nAwaiting response:")
-        preview = awaiting.text[:60] + "..." if len(awaiting.text) > 60 else awaiting.text
-        print(f"  {preview}")
+        if awaiting:
+            preview = awaiting.text[:60] + "..." if len(awaiting.text) > 60 else awaiting.text
+            print(f"  {preview}")
         print(f"\nDrafts: {len(all_drafts)}")
         if all_drafts:
             latest = all_drafts[-1]
@@ -296,25 +297,17 @@ def cmd_accept(args) -> int:
         return 1
     session = SessionV2(session_dir)
 
-    result = ops.accept_draft(session, args.ref)
+    result = ops.accept_draft(session, args.index)
     if not result.success:
         print(f"Error: {result.error}")
         if not session.is_drafting:
             pass  # Error already explains
         elif not session.get_all_drafts():
             print("Run 'mind run' to generate drafts.")
-        else:
-            drafts = session.get_all_drafts()
-            print(f"Or use negative offsets: -1 (latest) to -{len(drafts)} (oldest)")
         return 1
 
     draft = result.draft
-    drafts = session.get_all_drafts()  # Now empty after accept, but we have the draft
-    # Calculate offset from the draft's position before acceptance
-    # Since draft was accepted, we report based on what the user referenced
-    offset = args.ref if args.ref and args.ref < 0 else -1
-
-    print(f"Accepted draft #{draft.iter} ({offset}):")
+    print(f"Accepted draft #{draft.index} (iter {draft.iter}):")
     print("-" * 40)
     print(draft.text)
     print("-" * 40)
@@ -322,68 +315,10 @@ def cmd_accept(args) -> int:
     return 0
 
 
-def cmd_drafts_archive(args, session: SessionV2) -> int:
-    """Show archived drafts from past exchanges."""
-    dialogue_pool = session.dialogue_pool
-
-    # If no refs provided, list all exchanges
-    if not args.refs:
-        exchanges = dialogue_pool.list_exchanges()
-        if not exchanges:
-            print("No archived exchanges yet.")
-            print("Drafts are archived when you accept a draft with 'mind accept'.")
-            return 0
-
-        print(f"Archived exchanges ({len(exchanges)} total):")
-        print()
-        for ex in exchanges:
-            accepted = f"accepted #{ex['accepted_index']}" if ex['accepted_index'] else "no accepted"
-            iter_range = f"iter {ex['first_iter']}-{ex['last_iter']}" if ex['first_iter'] != ex['last_iter'] else f"iter {ex['first_iter']}"
-            print(f"  {ex['exchange_id']}: {ex['draft_count']} draft(s), {accepted}, {iter_range}")
-
-        print()
-        print("Usage: mind drafts archive <exchange_id>  # Show all drafts for that exchange")
-        return 0
-
-    # Show drafts for a specific exchange
-    exchange_id = args.refs[0]
-    drafts = dialogue_pool.get_exchange_drafts(exchange_id)
-
-    if not drafts:
-        print(f"No drafts found for exchange '{exchange_id}'.")
-        exchanges = dialogue_pool.list_exchanges()
-        if exchanges:
-            print(f"Valid exchange IDs: {[e['exchange_id'] for e in exchanges]}")
-        return 1
-
-    print(f"Exchange {exchange_id} ({len(drafts)} draft(s)):")
-    print()
-
-    for draft in drafts:
-        accepted = "[ACCEPTED]" if draft.get('accepted') else ""
-        seen = "[seen]" if draft.get('user_seen') else "[unseen]"
-        print(f"Draft #{draft['draft_index']} (iter {draft['iter_created']}) {seen} {accepted}")
-        print("\u2500" * 20)
-
-        # Truncate to max 8 lines
-        truncated, remaining = truncate_text(draft['text'], max_lines=8)
-        for line in truncated.split('\n'):
-            print(f"  {line}")
-        if remaining > 0:
-            print(f"  ... ({remaining} more lines)")
-        print()
-
-    return 0
-
-
 def cmd_drafts(args) -> int:
     """Show or manage drafts."""
     session_dir = get_current_session_dir()
     session = SessionV2(session_dir)
-
-    # Handle 'archive' subcommand - works regardless of drafting state
-    if args.drafts_command == 'archive':
-        return cmd_drafts_archive(args, session)
 
     if not session.is_drafting:
         print("No pending message. Send a message with 'mind message' first.")
@@ -394,27 +329,25 @@ def cmd_drafts(args) -> int:
     # Handle 'show' subcommand
     if args.drafts_command == 'show':
         if not args.refs:
-            print("Usage: mind drafts show <iter|offset>")
-            print("  mind drafts show 247    # Show draft from iteration 247")
-            print("  mind drafts show -1     # Show latest draft")
+            print("Usage: mind drafts show <index>")
+            print("  mind drafts show 0    # Show first draft")
+            print("  mind drafts show 2    # Show draft #2")
             return 1
 
         if not all_drafts:
             print("No drafts available.")
             return 1
 
-        ref = int(args.refs[0])
-        draft = ops.resolve_draft_ref(ref, all_drafts)
+        index = int(args.refs[0])
+        draft = next((d for d in all_drafts if d.index == index), None)
         if draft is None:
-            valid_iters = [d.iter for d in all_drafts]
-            print(f"Draft not found for reference {ref}.")
-            print(f"Valid iteration numbers: {valid_iters}")
-            print(f"Or use negative offsets: -1 (latest) to -{len(all_drafts)} (oldest)")
+            valid_indices = [d.index for d in all_drafts]
+            print(f"Draft #{index} not found.")
+            print(f"Valid indices: {valid_indices}")
             return 1
 
-        offset = ops.get_draft_offset(draft, all_drafts)
         seen = "[seen]" if draft.seen else "[unseen]"
-        print(f"Draft #{draft.iter} ({offset}) {seen}")
+        print(f"Draft #{draft.index} (iter {draft.iter}) {seen}")
         print("-" * 40)
         print(draft.text)
         print("-" * 40)
@@ -428,26 +361,26 @@ def cmd_drafts(args) -> int:
             print("No drafts to mark as seen.")
             return 0
 
-        refs = [int(r) for r in args.refs] if args.refs else None
-        count, marked = ops.mark_drafts_seen(session, refs)
-        if refs:
+        indices = [int(r) for r in args.refs] if args.refs else None
+        count, marked = ops.mark_drafts_seen(session, indices)
+        if indices:
             if marked:
                 print(f"Marked drafts as seen: {marked}")
             else:
                 print("No matching drafts found.")
         else:
-            print("Marked all drafts as seen.")
+            print(f"Marked {count} draft(s) as seen.")
         return 0
 
     # Default: show all drafts (truncated)
-    awaiting = session.dialogue_pool.awaiting
+    awaiting = session.get_awaiting_message()
     print("Awaiting response to:")
     print("-" * 40)
-    # Truncate awaiting message too
-    truncated_awaiting, remaining_awaiting = truncate_text(awaiting.text, max_lines=8)
-    print(truncated_awaiting)
-    if remaining_awaiting > 0:
-        print(f"... ({remaining_awaiting} more lines)")
+    if awaiting:
+        truncated_awaiting, remaining_awaiting = truncate_text(awaiting.text, max_lines=8)
+        print(truncated_awaiting)
+        if remaining_awaiting > 0:
+            print(f"... ({remaining_awaiting} more lines)")
     print("-" * 40)
 
     if not all_drafts:
@@ -459,9 +392,8 @@ def cmd_drafts(args) -> int:
 
     # Show newest first
     for draft in reversed(all_drafts):
-        offset = ops.get_draft_offset(draft, all_drafts)
         seen = "[seen]" if draft.seen else "[unseen]"
-        print(f"Draft #{draft.iter} ({offset}) {seen}")
+        print(f"Draft #{draft.index} (iter {draft.iter}) {seen}")
         print("\u2500" * 20)  # Unicode box-drawing horizontal line
 
         # Truncate to max 8 lines
@@ -475,10 +407,9 @@ def cmd_drafts(args) -> int:
 
     latest = all_drafts[-1]
     print("Commands:")
-    print(f"  mind accept              Accept latest draft (#{latest.iter})")
-    print(f"  mind accept <iter>       Accept draft by iteration number")
-    print(f"  mind accept -N           Accept Nth-from-latest draft")
-    print(f"  mind drafts show <ref>   Show full draft text")
+    print(f"  mind accept              Accept latest draft (#{latest.index})")
+    print(f"  mind accept <index>      Accept draft by index")
+    print(f"  mind drafts show <index> Show full draft text")
     print("  mind drafts seen         Mark all as seen")
 
     return 0
@@ -500,7 +431,7 @@ def cmd_history(args) -> int:
         if not entries:
             if args.ref > 0:
                 # Positive ref: looking for specific iter
-                valid_iters = [e.iter for e in history]
+                valid_iters = [m.iter for m in history]
                 print(f"History entry not found for iteration {args.ref}.")
                 print(f"Valid iteration numbers: {valid_iters}")
             else:
@@ -514,30 +445,28 @@ def cmd_history(args) -> int:
     is_single = len(entries) == 1
 
     if is_single:
-        entry = entries[0]
-        offset = ops.get_history_offset(entry, history)
-        role_label = "user" if entry.role == "user" else "mind"
-        print(f"[{role_label}] iter {entry.iter} ({offset})")
+        msg = entries[0]
+        role_label = "user" if msg.role == "user" else "mind"
+        print(f"[{role_label}] iter {msg.iter}")
         print("-" * 20)
         # Full view for single entry
-        for line in entry.text.split('\n'):
+        for line in msg.text.split('\n'):
             print(f"  {line}")
         print("-" * 20)
     else:
         # Multiple entries: truncated view
         total_exchanges = len(history) // 2
         shown_count = len(entries)
-        print(f"History ({shown_count} entries, {total_exchanges} exchanges total):")
+        print(f"History ({shown_count} messages, {total_exchanges} exchanges total):")
         print()
 
-        for entry in entries:
-            offset = ops.get_history_offset(entry, history)
-            role_label = "user" if entry.role == "user" else "mind"
-            print(f"[{role_label}] iter {entry.iter} ({offset})")
+        for msg in entries:
+            role_label = "user" if msg.role == "user" else "mind"
+            print(f"[{role_label}] iter {msg.iter}")
             print("-" * 20)
 
             # Truncate to max 8 lines
-            truncated, remaining = truncate_text(entry.text, max_lines=8)
+            truncated, remaining = truncate_text(msg.text, max_lines=8)
             for line in truncated.split('\n'):
                 print(f"  {line}")
             if remaining > 0:
@@ -716,14 +645,14 @@ def main():
 
     # accept
     p_accept = subparsers.add_parser('accept', help='Accept a draft response')
-    p_accept.add_argument('ref', type=int, nargs='?', default=None,
-                          help='Draft reference: iter number or negative offset (-1=latest)')
+    p_accept.add_argument('index', type=int, nargs='?', default=None,
+                          help='Draft index (0-based). None = latest')
 
     # drafts
     p_drafts = subparsers.add_parser('drafts', help='Show or manage drafts')
-    p_drafts.add_argument('drafts_command', nargs='?', choices=['seen', 'show', 'archive'],
-                          help='Subcommand: seen, show, archive')
-    p_drafts.add_argument('refs', nargs='*', help='Draft references (iter or negative offset) or exchange_id for archive')
+    p_drafts.add_argument('drafts_command', nargs='?', choices=['seen', 'show'],
+                          help='Subcommand: seen, show')
+    p_drafts.add_argument('refs', nargs='*', help='Draft indices (0-based)')
 
     # history
     p_history = subparsers.add_parser('history', help='Show conversation history')

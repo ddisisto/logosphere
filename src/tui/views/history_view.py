@@ -3,7 +3,7 @@
 from textual.widgets import Static
 from textual.containers import VerticalScroll
 
-from ...core.dialogue_pool import HistoryEntry
+from ...core.message_store import Message
 from ...core.session_v2 import SessionConfig
 
 
@@ -33,7 +33,7 @@ class HistoryView(VerticalScroll):
 
     def __init__(
         self,
-        history: list[HistoryEntry],
+        history: list[Message],
         current_iter: int,
         config: SessionConfig,
         **kwargs,
@@ -49,7 +49,7 @@ class HistoryView(VerticalScroll):
 
     def update_history(
         self,
-        history: list[HistoryEntry],
+        history: list[Message],
         current_iter: int,
     ) -> None:
         """Update with new history data."""
@@ -68,13 +68,13 @@ class HistoryView(VerticalScroll):
         # Apply display limits (same as mind sees)
         visible = self._apply_limits(self._history)
 
-        for entry in visible:
-            self.mount(self._make_entry_widget(entry))
+        for msg in visible:
+            self.mount(self._make_entry_widget(msg))
 
         # Scroll to bottom (newest)
         self.scroll_end(animate=False)
 
-    def _apply_limits(self, history: list[HistoryEntry]) -> list[HistoryEntry]:
+    def _apply_limits(self, history: list[Message]) -> list[Message]:
         """Apply display limits: max count and max chars."""
         max_count = self._config.history_display_count
         max_chars = self._config.history_display_chars
@@ -86,30 +86,30 @@ class HistoryView(VerticalScroll):
             selected = list(history[-max_count:])
 
         # Apply char limit (trim from start)
-        total_chars = sum(len(e.text) for e in selected)
+        total_chars = sum(len(m.text) for m in selected)
         while selected and total_chars > max_chars:
             removed = selected.pop(0)
             total_chars -= len(removed.text)
 
         return selected
 
-    def _make_entry_widget(self, entry: HistoryEntry) -> Static:
+    def _make_entry_widget(self, msg: Message) -> Static:
         """Create widget for a single history entry."""
-        age = self._current_iter - entry.iter
-        classes = ["history-entry", f"history-{entry.role}"]
-        content = self._format_entry(entry, age)
+        age = self._current_iter - msg.iter
+        classes = ["history-entry", f"history-{msg.role}"]
+        content = self._format_entry(msg, age)
         return Static(content, classes=" ".join(classes))
 
-    def _format_entry(self, entry: HistoryEntry, age: int) -> str:
+    def _format_entry(self, msg: Message, age: int) -> str:
         """Format a single history entry for display."""
         lines = []
 
         # Header
-        role_label = "[bold blue]user[/]" if entry.role == "user" else "[bold green]mind[/]"
+        role_label = "[bold blue]user[/]" if msg.role == "user" else "[bold green]mind[/]"
         lines.append(f"{role_label} · age {age}")
 
         # Text content
-        text = entry.text.strip()
+        text = msg.text.strip()
         indented = "\n".join("  " + line for line in text.split("\n"))
         lines.append(indented)
 
