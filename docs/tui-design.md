@@ -59,38 +59,31 @@ Refactor to separate logic from presentation:
 src/
 ├── core/           # unchanged - data model
 ├── mind/
-│   ├── runner.py   # emit events instead of prints
-│   ├── ops.py      # NEW: shared operations
+│   ├── runner.py   # emits events via EventEmitter
+│   ├── ops.py      # shared operations (send_message, accept_draft, etc.)
+│   ├── events.py   # EventEmitter + event dataclasses
 │   └── config.py
-├── tui/
+├── tui/            # Phase 2+
 │   ├── app.py      # Textual app
 │   ├── views/      # DraftBufferView, HistoryView
-│   ├── panels/     # StatusPanel, IterationLog
-│   └── events.py   # TUI event handling
+│   └── panels/     # StatusPanel, IterationLog
 scripts/
-└── mind.py         # CLI - thin wrapper calling ops.py
+└── mind.py         # CLI - uses ops.py
 ```
 
 ### Event-Based Runner
 
-Runner emits structured events rather than printing:
+Runner emits structured events via `EventEmitter` (see `src/mind/events.py`):
 
 ```python
-@dataclass
-class IterationEvent:
-    iteration: int
-    thoughts_added: int
-    thoughts_chars: int
-    draft_added: bool
-    draft_length: Optional[int]
-    hard_signal: bool
-    signal_state: dict  # {consecutive_hard, threshold}
+# Key event types (EventType enum)
+ITERATION_START, ITERATION_COMPLETE, RUN_START, RUN_STOP, SIGNAL_DETECTED
 
-@dataclass
-class StopEvent:
-    reason: str  # "draft", "hard_signal", "true_silence", "max_reached"
-    iterations_run: int
+# Example: subscribe to iteration events
+runner.events.on(EventType.ITERATION_COMPLETE, my_handler)
 ```
+
+Event dataclasses include: `IterationStartEvent`, `IterationCompleteEvent`, `RunStartEvent`, `RunStopEvent`, `SignalDetectedEvent`.
 
 Subscribers (CLI verbose mode, TUI) handle rendering.
 
@@ -110,10 +103,11 @@ CLI and TUI both call these, handle output differently.
 
 ## Implementation Phases
 
-### Phase 1: Refactor for Reuse
-1. Create `ops.py` with shared operations
-2. Refactor CLI to use ops.py
-3. Add event emission to runner (keep prints for now, emit alongside)
+### Phase 1: Refactor for Reuse ✓ COMPLETE
+1. ✓ Create `src/mind/ops.py` with shared operations + result types
+2. ✓ Refactor CLI to use ops.py (removed duplicate helpers)
+3. ✓ Create `src/mind/events.py` with EventEmitter + event dataclasses
+4. ✓ Runner emits events alongside verbose prints
 
 ### Phase 2: Basic TUI Shell
 1. Textual app with layout structure
