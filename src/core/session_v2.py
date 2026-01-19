@@ -12,6 +12,9 @@ Session structure:
     ├── dialogue/
     │   └── pool.yaml
     ├── clusters/             # Unchanged from v1
+    ├── prompts/              # LLM request/response logs (created by runner)
+    │   ├── {iter:06d}-req.txt
+    │   └── {iter:06d}-resp.txt
     └── interventions.jsonl   # Audit trail
 """
 

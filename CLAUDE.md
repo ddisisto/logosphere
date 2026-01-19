@@ -191,6 +191,7 @@ A session is a directory containing:
 - `thinking/` - Thought embeddings and pool state
 - `dialogue/` - Dialogue pool state (awaiting/drafts/history)
 - `clusters/` - Cluster registry and assignments
+- `prompts/` - Raw LLM requests/responses (`{iter:06d}-req.txt`, `{iter:06d}-resp.txt`)
 - `interventions.jsonl` - Audit log of all actions
 
 Sessions are linear (no branching). Fork sessions by copying with `extract_session.py`.

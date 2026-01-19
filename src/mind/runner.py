@@ -196,6 +196,9 @@ class MindRunner:
             print(output.raw)
             print("=" * 60 + "\n")
 
+        # Save prompt and response to session/prompts/ for debugging/reconstruction
+        self._save_prompt_log(user_input, output.raw)
+
         if output.skipped:
             if self.config.verbose:
                 print("  [skipped] Mind opted out this iteration")
@@ -462,6 +465,22 @@ class MindRunner:
             stop_reason = "draft" if total_drafts > 0 else "hard signal" if hard_signals > 0 else "max reached"
             print(f"Stopped after {len(results)} iterations ({stop_reason}): "
                   f"{total_thoughts} thoughts, {total_drafts} drafts")
+
+    def _save_prompt_log(self, request: str, response: str) -> None:
+        """
+        Save LLM request/response to session/prompts/ directory.
+
+        Files are named {iter:06d}-req.txt and {iter:06d}-resp.txt.
+        """
+        prompts_dir = self.session.session_dir / 'prompts'
+        prompts_dir.mkdir(exist_ok=True)
+
+        iter_str = f"{self.session.iteration:06d}"
+        req_path = prompts_dir / f"{iter_str}-req.txt"
+        resp_path = prompts_dir / f"{iter_str}-resp.txt"
+
+        req_path.write_text(request, encoding='utf-8')
+        resp_path.write_text(response, encoding='utf-8')
 
     def _make_clustering_adapter(self):
         """
