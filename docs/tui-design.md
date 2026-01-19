@@ -101,6 +101,26 @@ def get_session_status(session: SessionV2) -> dict
 
 CLI and TUI both call these, handle output differently.
 
+### Session Locking
+
+Prevents concurrent access from TUI and CLI.
+
+**Location**: `{session_dir}/.lock`
+
+**Contents**:
+```yaml
+pid: 12345
+holder: "tui"  # or "cli:run", "cli:step"
+started: "2026-01-19T14:30:00+00:00"
+```
+
+**Behavior**:
+- **Acquired on**: TUI launch, `mind run`, `mind step`
+- **Released on**: TUI exit, run/step completion
+- **Read-only bypass**: `mind status` works without lock (read-only)
+- **Stale detection**: Check if PID alive, auto-clear if dead
+- **Recovery**: Manual removal of `.lock` file (no --force flag)
+
 ## Implementation Phases
 
 ### Phase 1: Refactor for Reuse ✓ COMPLETE
@@ -117,21 +137,18 @@ CLI and TUI both call these, handle output differently.
 5. ✓ Auto-set presence to "reviewing" on launch
 6. ✓ Entry point: `scripts/tui.py`
 
-### Phase 3: Live Views
-1. Views update when session changes (reactive)
-2. StatusPanel signal_state from runner (currently placeholder)
-3. Refresh on external session changes
+### Phase 3: Iteration Control + Live Updates
+1. Session locking (acquire on TUI launch / CLI run, release on exit)
+2. Run/Pause controls in TUI (`r`/`p` keys)
+3. Runner in background worker (Textual `@work`)
+4. Event subscription → live IterationLog updates
+5. Views refresh after each iteration (DraftBufferView, StatusPanel)
 
-### Phase 4: Iteration Control
-1. Run/Pause controls
-2. IterationLog with live updates
-3. Event subscription from runner
-
-### Phase 5: Full Interaction
-1. Message input
-2. Draft acceptance
-3. Presence controls
-4. Keybindings
+### Phase 4: Full Interaction
+1. Message input modal (required after accept, before run)
+2. Draft acceptance (`a` for latest, `1-9` for specific)
+3. Presence controls (`P` to cycle)
+4. Error display (blocking modal)
 
 ## Keybindings (Draft)
 
@@ -160,5 +177,11 @@ Resolved during Phase 2:
 - **Message input**: Modal, required after accept/before run, unavailable otherwise
 - **Auto-presence**: Yes, set to "reviewing" on TUI launch
 - **Session selection**: Follow CLI pattern (`~/.mind_session`)
-- **Threading**: Textual `@work` decorator for runner (Phase 4)
-- **Error display**: Blocking modal (Phase 5)
+- **Threading**: Textual `@work` decorator for runner (Phase 3)
+- **Error display**: Blocking modal (Phase 4)
+
+Resolved during Phase 3 planning:
+
+- **Session locking**: Full lock (not just iterations), exception for read-only `status`
+- **Lock recovery**: Manual `.lock` file removal, no --force flag
+- **Phase reorder**: Iteration control before full interaction (live updates need runner)

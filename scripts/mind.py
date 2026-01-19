@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.session_v2 import SessionV2, SessionConfig
 from src.core.dialogue_pool import Draft
+from src.core.lock import SessionLock, check_lock, LockError
 from src.mind import MindRunner, MindConfig, ops
 
 
@@ -58,6 +59,20 @@ def get_current_session_dir() -> Path:
 def set_current_session(path: Path) -> None:
     """Set the current session directory."""
     SESSION_FILE.write_text(str(path.resolve()))
+
+
+def require_unlocked(session_dir: Path) -> bool:
+    """
+    Check if session is locked by another process.
+
+    Returns True if unlocked/available, False if locked (prints error).
+    """
+    lock_info = check_lock(session_dir)
+    if lock_info is not None:
+        print(f"Error: Session locked by {lock_info.holder} (pid {lock_info.pid})")
+        print("  Release the lock or wait for the other process to finish.")
+        return False
+    return True
 
 
 def truncate_text(text: str, max_lines: int = 8) -> tuple[str, int]:
@@ -167,40 +182,45 @@ def cmd_status(args) -> int:
 def cmd_run(args) -> int:
     """Run iterations."""
     session_dir = get_current_session_dir()
-    session = SessionV2(session_dir)
-
-    config = MindConfig(
-        verbose=not args.quiet,
-    )
-
-    runner = MindRunner(session, config)
-
-    # -b flag controls observe mode (user presence)
-    # observe=True: user watching, mark drafts seen, stop on each draft
-    # observe=False: user away, don't mark seen, only stop on hard signal
-    observe = not args.background
 
     try:
-        if args.iterations is not None:
-            # Fixed number of iterations
-            results = runner.run(iterations=args.iterations, observe=observe)
-        else:
-            # Run until stop condition (default max: 100)
-            results = runner.run(max_iterations=100, observe=observe)
+        with SessionLock(session_dir, "cli:run"):
+            session = SessionV2(session_dir)
 
-        # Show stop reason for run-until-stop mode
-        if args.iterations is None and results and not args.quiet:
-            last = results[-1]
-            if last.draft_added:
-                print("Stop reason: draft produced")
-            elif last.hard_signal and last.thoughts_added == 0:
-                print("Stop reason: true silence")
-            elif last.hard_signal:
-                print("Stop reason: hard signal (consecutive no-drafts)")
+            config = MindConfig(
+                verbose=not args.quiet,
+            )
+
+            runner = MindRunner(session, config)
+
+            # -b flag controls observe mode (user presence)
+            # observe=True: user watching, mark drafts seen, stop on each draft
+            # observe=False: user away, don't mark seen, only stop on hard signal
+            observe = not args.background
+
+            if args.iterations is not None:
+                # Fixed number of iterations
+                results = runner.run(iterations=args.iterations, observe=observe)
             else:
-                print("Stop reason: max iterations reached")
+                # Run until stop condition (default max: 100)
+                results = runner.run(max_iterations=100, observe=observe)
 
-        return 0
+            # Show stop reason for run-until-stop mode
+            if args.iterations is None and results and not args.quiet:
+                last = results[-1]
+                if last.draft_added:
+                    print("Stop reason: draft produced")
+                elif last.hard_signal and last.thoughts_added == 0:
+                    print("Stop reason: true silence")
+                elif last.hard_signal:
+                    print("Stop reason: hard signal (consecutive no-drafts)")
+                else:
+                    print("Stop reason: max iterations reached")
+
+            return 0
+    except LockError as e:
+        print(f"Error: {e}")
+        return 1
     except Exception as e:
         print(f"Error: {e}")
         return 1
@@ -209,14 +229,19 @@ def cmd_run(args) -> int:
 def cmd_step(args) -> int:
     """Run single iteration."""
     session_dir = get_current_session_dir()
-    session = SessionV2(session_dir)
-
-    config = MindConfig(verbose=True, debug=args.debug)
-    runner = MindRunner(session, config)
 
     try:
-        result = runner.step()
-        return 0
+        with SessionLock(session_dir, "cli:step"):
+            session = SessionV2(session_dir)
+
+            config = MindConfig(verbose=True, debug=args.debug)
+            runner = MindRunner(session, config)
+
+            result = runner.step()
+            return 0
+    except LockError as e:
+        print(f"Error: {e}")
+        return 1
     except Exception as e:
         print(f"Error: {e}")
         return 1
@@ -225,6 +250,8 @@ def cmd_step(args) -> int:
 def cmd_message(args) -> int:
     """Send a message to the mind."""
     session_dir = get_current_session_dir()
+    if not require_unlocked(session_dir):
+        return 1
     session = SessionV2(session_dir)
 
     # Determine message text from: positional arg > -f file > stdin
@@ -265,6 +292,8 @@ def cmd_message(args) -> int:
 def cmd_accept(args) -> int:
     """Accept a draft response by iter number or negative offset."""
     session_dir = get_current_session_dir()
+    if not require_unlocked(session_dir):
+        return 1
     session = SessionV2(session_dir)
 
     result = ops.accept_draft(session, args.ref)
@@ -391,8 +420,10 @@ def cmd_drafts(args) -> int:
         print("-" * 40)
         return 0
 
-    # Handle 'seen' subcommand
+    # Handle 'seen' subcommand (mutating - requires unlock)
     if args.drafts_command == 'seen':
+        if not require_unlocked(session_dir):
+            return 1
         if not all_drafts:
             print("No drafts to mark as seen.")
             return 0
@@ -621,7 +652,9 @@ def cmd_signal(args) -> int:
         return 0
 
     if args.presence or args.status:
-        # Update signal
+        # Update signal (requires unlocked session)
+        if not require_unlocked(session_dir):
+            return 1
         result = ops.set_signal(session, presence=args.presence, status=args.status)
         if not result.success:
             print(f"Error: {result.error}")
