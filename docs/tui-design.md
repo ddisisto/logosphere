@@ -137,10 +137,10 @@ started: "2026-01-19T14:30:00+00:00"
 5. ✓ Auto-set presence to "reviewing" on launch
 6. ✓ Entry point: `scripts/tui.py`
 
-### Phase 3: Iteration Control + Live Updates
+### Phase 3: Single-Step + Live Updates
 1. Session locking (acquire on TUI launch / CLI run, release on exit)
-2. Run/Pause controls in TUI (`r`/`p` keys)
-3. Runner in background worker (Textual `@work`)
+2. Single-step iteration (`s` key) - no auto-run on startup
+3. Background worker for step (Textual `@work`)
 4. Event subscription → live IterationLog updates
 5. Views refresh after each iteration (DraftBufferView, StatusPanel)
 
@@ -150,18 +150,24 @@ started: "2026-01-19T14:30:00+00:00"
 3. Presence controls (`P` to cycle)
 4. Error display (blocking modal)
 
+### Phase 5: Continuous Running
+1. Run/Pause controls (`r`/`p` keys)
+2. Background loop with stop conditions (draft, hard signal, true silence)
+3. Observe mode toggle (mark drafts seen vs background)
+
 ## Keybindings (Draft)
 
-| Key | Action |
-|-----|--------|
-| `r` | Run iterations |
-| `p` | Pause |
-| `a` | Accept latest draft |
-| `1-9` | Accept draft N |
-| `h` | Toggle history view |
-| `m` | Message input |
-| `P` | Cycle presence |
-| `q` | Quit |
+| Key | Action | Phase |
+|-----|--------|-------|
+| `s` | Step (single iteration) | 3 |
+| `h` | Toggle history view | 2 |
+| `q` | Quit | 2 |
+| `a` | Accept latest draft | 4 |
+| `1-9` | Accept draft N | 4 |
+| `m` | Message input | 4 |
+| `P` | Cycle presence | 4 |
+| `r` | Run iterations | 5 |
+| `p` | Pause | 5 |
 
 ## Dependencies
 

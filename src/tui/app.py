@@ -1,7 +1,7 @@
 """
 Mind TUI - Textual interface for Logosphere v2.
 
-Phase 3: Iteration control with live updates.
+Phase 3: Single-step iteration with live updates.
 """
 
 from pathlib import Path
@@ -10,12 +10,13 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, Static
-from textual.worker import Worker, WorkerState
+
+from textual.worker import Worker
 
 from ..core.session_v2 import SessionV2
 from ..core.lock import acquire_lock, release_lock, LockError
 from ..mind import ops, MindRunner, MindConfig
-from ..mind.events import EventType, IterationCompleteEvent, RunStopEvent
+from ..mind.events import EventType, IterationCompleteEvent
 from .panels import IterationLog, StatusPanel
 from .panels.iteration_log import IterationSummary
 from .views import DraftBufferView, HistoryView
@@ -79,8 +80,7 @@ class MindApp(App):
     BINDINGS = [
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+c", "quit", "Quit", priority=True, show=False),
-        Binding("r", "run_iterations", "Run"),
-        Binding("p", "pause_iterations", "Pause"),
+        Binding("s", "step_iteration", "Step"),
         Binding("h", "toggle_view", "Toggle history"),
         Binding("q", "quit", "Quit"),
     ]
@@ -92,8 +92,8 @@ class MindApp(App):
         self._showing_history = False
         self._lock_held = False
         self._runner: MindRunner | None = None
-        self._running = False
-        self._run_worker: Worker | None = None
+        self._stepping = False  # Guard against double-stepping
+        self._step_worker: Worker | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -139,9 +139,8 @@ class MindApp(App):
             config = MindConfig(verbose=False)
             self._runner = MindRunner(self._session, config)
 
-            # Subscribe to runner events
+            # Subscribe to runner events (for UI updates after step)
             self._runner.events.on(EventType.ITERATION_COMPLETE, self._on_iteration_complete)
-            self._runner.events.on(EventType.RUN_STOP, self._on_run_stop)
 
             # Set presence to "reviewing" on launch
             ops.set_signal(self._session, presence="reviewing")
@@ -215,9 +214,9 @@ class MindApp(App):
 
         parts = []
 
-        # Run state indicator
-        if self._running:
-            parts.append("[bold green]● RUNNING[/]")
+        # State indicator
+        if self._stepping:
+            parts.append("[bold yellow]● STEPPING[/]")
         elif self._session.is_drafting:
             parts.append("[cyan]DRAFTING[/]")
         else:
@@ -240,10 +239,10 @@ class MindApp(App):
         view_name = "history" if self._showing_history else "drafts"
         self.notify(f"Switched to {view_name} view")
 
-    def action_run_iterations(self) -> None:
-        """Start running iterations."""
-        if self._running:
-            self.notify("Already running")
+    def action_step_iteration(self) -> None:
+        """Run a single iteration in the background."""
+        if self._stepping:
+            self.notify("Already stepping")
             return
 
         if self._session is None or self._runner is None:
@@ -251,57 +250,32 @@ class MindApp(App):
             return
 
         if not self._session.is_drafting:
-            self.notify("Cannot run: session is idle (send a message first)")
+            self.notify("Cannot step: session is idle (send a message first)")
             return
 
-        self._running = True
+        self._stepping = True
         self._update_controls()
-        self.notify("Starting iterations...")
 
-        # Run iterations in a background worker
-        self._run_worker = self.run_worker(
-            self._run_iterations_worker,
+        # Run single iteration in background worker
+        self._step_worker = self.run_worker(
+            self._step_iteration_worker,
             thread=True,
-            name="iteration-runner",
+            name="step-iteration",
         )
 
-    def action_pause_iterations(self) -> None:
-        """Stop running iterations."""
-        if not self._running:
-            self.notify("Not running")
-            return
-
-        self._running = False
-        self._update_controls()
-        self.notify("Pausing...")
-
-    def _run_iterations_worker(self) -> None:
-        """Worker function that runs iterations in a background thread."""
+    def _step_iteration_worker(self) -> None:
+        """Worker function that runs a single iteration in background thread."""
         if self._runner is None or self._session is None:
+            self.call_from_thread(self._on_step_complete)
             return
 
-        # Run until stop condition or pause requested
-        while self._running:
-            try:
-                # Run a single iteration
-                result = self._runner.step()
-
-                # Check stop conditions (runner events handle notification)
-                if result.draft_added:
-                    # Stop on draft in observe mode
-                    self._running = False
-                elif result.hard_signal and result.thoughts_added == 0:
-                    # True silence - stop immediately
-                    self._running = False
-                elif result.hard_signal:
-                    # Hard signal threshold check is in runner
-                    pass  # Continue unless threshold reached
-
-            except Exception as e:
-                # Post error to main thread
-                self.call_from_thread(self._handle_run_error, str(e))
-                self._running = False
-                break
+        try:
+            self._runner.step()
+            # Event handler (_on_iteration_complete) will update UI
+        except Exception as e:
+            self.call_from_thread(self._handle_step_error, str(e))
+        finally:
+            self.call_from_thread(self._on_step_complete)
 
     def _on_iteration_complete(self, event: IterationCompleteEvent) -> None:
         """Handle iteration complete event from runner (called from worker thread)."""
@@ -317,11 +291,6 @@ class MindApp(App):
 
         # Post UI updates to main thread
         self.call_from_thread(self._update_after_iteration, summary, event)
-
-    def _on_run_stop(self, event: RunStopEvent) -> None:
-        """Handle run stop event from runner (called from worker thread)."""
-        self._running = False
-        self.call_from_thread(self._handle_run_stop, event)
 
     def _update_after_iteration(
         self, summary: IterationSummary, event: IterationCompleteEvent
@@ -366,16 +335,13 @@ class MindApp(App):
         except Exception:
             pass  # View might be HistoryView or not mounted
 
-    def _handle_run_stop(self, event: RunStopEvent) -> None:
-        """Handle run stop on main thread."""
-        self._running = False
+    def _on_step_complete(self) -> None:
+        """Called when step completes (success or error)."""
+        self._stepping = False
         self._update_controls()
-        self.notify(f"Stopped: {event.reason} ({event.iterations_run} iterations)")
 
-    def _handle_run_error(self, error: str) -> None:
-        """Handle run error on main thread."""
-        self._running = False
-        self._update_controls()
+    def _handle_step_error(self, error: str) -> None:
+        """Handle step error on main thread."""
         self.notify(f"Error: {error}", severity="error")
 
     def action_quit(self) -> None:
