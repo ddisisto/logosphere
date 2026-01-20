@@ -20,7 +20,7 @@ from ..mind.events import EventType, IterationCompleteEvent
 from .panels import IterationLog, StatusPanel
 from .panels.iteration_log import IterationSummary
 from .views import DraftBufferView, HistoryView
-from .modals import UserModal
+from .modals import UserModal, MessageModal
 from .views.draft_buffer_view import is_signal
 
 
@@ -84,6 +84,7 @@ class MindApp(App):
         Binding("ctrl+c", "quit", "Quit", priority=True, show=False),
         Binding("s", "step_iteration", "Step"),
         Binding("a", "accept_draft", "Accept"),
+        Binding("m", "send_message", "Message"),
         Binding("h", "toggle_view", "History"),
         Binding("p", "cycle_presence", "Presence"),
         Binding("u", "cycle_user", "User"),
@@ -339,14 +340,46 @@ class MindApp(App):
         # Refresh views - session is now idle
         await self._mount_main_view()
         self._update_controls()
+        self._refresh_status_panel()
 
-        # Update status panel
-        try:
-            status = ops.get_session_status(self._session)
-            status_panel = self.query_one("#status-panel", StatusPanel)
-            status_panel.update_status(status)
-        except Exception:
-            pass
+        # Auto-launch message modal for next message
+        self._launch_message_modal()
+
+    def action_send_message(self) -> None:
+        """Open message input modal."""
+        if self._session is None:
+            self.notify("No session loaded")
+            return
+
+        if self._session.is_drafting:
+            self.notify("Already drafting - accept a draft first")
+            return
+
+        self._launch_message_modal()
+
+    def _launch_message_modal(self) -> None:
+        """Launch the message input modal."""
+        if self._session is None:
+            return
+
+        def on_modal_dismiss(message: str | None) -> None:
+            """Handle modal dismiss."""
+            if message and self._session:
+                result = ops.send_message(self._session, message)
+                if result.success:
+                    self.notify("Message sent")
+                    # Refresh views - session is now drafting
+                    self.call_later(self._refresh_after_message)
+                else:
+                    self.notify(f"Error: {result.error}", severity="error")
+
+        self.push_screen(MessageModal(self._session), on_modal_dismiss)
+
+    async def _refresh_after_message(self) -> None:
+        """Refresh views after sending a message."""
+        await self._mount_main_view()
+        self._update_controls()
+        self._refresh_status_panel()
 
     def action_step_iteration(self) -> None:
         """Run a single iteration in the background."""
@@ -359,7 +392,8 @@ class MindApp(App):
             return
 
         if not self._session.is_drafting:
-            self.notify("Cannot step: session is idle (send a message first)")
+            # Session is idle - need to send a message first
+            self._launch_message_modal()
             return
 
         self._stepping = True
