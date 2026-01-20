@@ -120,16 +120,16 @@ class ClusterManager:
 
     def bootstrap(
         self,
-        session,
+        pool,  # ThinkingPool
         min_cluster_size: int = 3,
         verbose: bool = True,
     ) -> dict:
-        """Bootstrap clustering on existing messages."""
+        """Bootstrap clustering on existing thoughts."""
         self.registry = ClusterRegistry()
         self.assignments = AssignmentTable()
 
         stats = bootstrap_clustering(
-            session,
+            pool,
             self.registry,
             self.assignments,
             min_cluster_size=min_cluster_size,
@@ -141,7 +141,7 @@ class ClusterManager:
 
     def process(
         self,
-        session,
+        pool,  # ThinkingPool
         iteration: int,
         centroid_threshold: float = 0.3,
         min_cluster_size: int = 3,
@@ -160,7 +160,7 @@ class ClusterManager:
             self._load()
 
         stats = process_iteration(
-            session,
+            pool,
             self.registry,
             self.assignments,
             iteration,
@@ -207,7 +207,7 @@ class ClusterManager:
     def get_cluster_members(
         self,
         cluster_id: str,
-        session,
+        pool,  # ThinkingPool
         limit: int = 5,
     ) -> list[dict]:
         """
@@ -215,7 +215,7 @@ class ClusterManager:
 
         Args:
             cluster_id: The cluster to inspect
-            session: Session object for vector_db access
+            pool: ThinkingPool with thoughts and embeddings
             limit: Max members to return (0 = all)
 
         Returns:
@@ -228,22 +228,20 @@ class ClusterManager:
         if not cluster:
             return []
 
-        vector_db = session.vector_db
         member_vids = self.assignments.get_cluster_members(cluster_id)
 
         members = []
         for vid in member_vids:
-            meta = vector_db.get_message(vid)
+            meta = pool.get_message(vid)
             if not meta:
                 continue
 
-            embedding = vector_db.embeddings[vid]
+            embedding = pool.get_embedding(vid)
             distance = cosine_distance(embedding, cluster.centroid)
 
             members.append({
                 "vector_id": vid,
-                "round": meta.get("round", 0),
-                "mind_id": meta.get("mind_id", 0),
+                "iter": meta.get("round", 0),
                 "distance": float(distance),
                 "text": meta.get("text", ""),
             })

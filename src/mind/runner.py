@@ -17,7 +17,7 @@ from src.core.mind_v2 import (
     load_system_prompt,
     MindOutput,
 )
-from src.logos.clustering import ClusterManager
+from src.clustering import ClusterManager
 
 from .config import MindConfig
 from .events import (
@@ -259,7 +259,7 @@ class MindRunner:
         if new_thought_ids:
             try:
                 stats = self.cluster_mgr.process(
-                    session=self._make_clustering_adapter(),
+                    pool=self.session.thinking_pool,
                     iteration=self.session.iteration,
                     min_cluster_size=self.session.config.min_cluster_size,
                     centroid_threshold=self.session.config.centroid_match_threshold,
@@ -486,51 +486,3 @@ class MindRunner:
 
         req_path.write_text(request, encoding='utf-8')
         resp_path.write_text(response, encoding='utf-8')
-
-    def _make_clustering_adapter(self):
-        """
-        Create adapter to make ThinkingPool compatible with clustering API.
-
-        The clustering code expects:
-        - session.get_visible_ids() -> set[int]
-        - session.vector_db.get_message(vid) -> dict with 'text', 'round'
-        - session.vector_db.embeddings[vid] -> np.ndarray
-        """
-        return _ClusteringAdapter(self.session.thinking_pool)
-
-
-class _ClusteringAdapter:
-    """
-    Adapter to make ThinkingPool compatible with existing clustering code.
-
-    The clustering algorithm expects a session-like interface.
-    """
-
-    def __init__(self, thinking_pool):
-        self.thinking_pool = thinking_pool
-        # Create a fake vector_db interface
-        self.vector_db = _VectorDBAdapter(thinking_pool)
-
-    def get_visible_ids(self) -> set[int]:
-        """Get all thought vector IDs."""
-        return self.thinking_pool.get_visible_ids()
-
-
-class _VectorDBAdapter:
-    """Adapter to make ThinkingPool look like VectorDB for clustering."""
-
-    def __init__(self, thinking_pool):
-        self.thinking_pool = thinking_pool
-        # Expose embeddings as indexable
-        self._embeddings = None
-
-    @property
-    def embeddings(self):
-        """Return embeddings list for indexing."""
-        if self._embeddings is None:
-            self._embeddings = [t.embedding for t in self.thinking_pool.thoughts]
-        return self._embeddings
-
-    def get_message(self, vid: int) -> Optional[dict]:
-        """Get message dict for clustering compatibility."""
-        return self.thinking_pool.get_message(vid)

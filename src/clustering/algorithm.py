@@ -59,7 +59,7 @@ def update_centroid(cluster: ClusterState, new_embedding: np.ndarray, iteration:
 
 
 def process_iteration(
-    session,  # Session object
+    pool,  # ThinkingPool
     registry: ClusterRegistry,
     assignments: AssignmentTable,
     iteration: int,
@@ -75,7 +75,7 @@ def process_iteration(
     2. Run HDBSCAN on remaining unmatched to discover new clusters
 
     Args:
-        session: Session object with vector_db access
+        pool: ThinkingPool with thoughts and embeddings
         registry: ClusterRegistry to update
         assignments: AssignmentTable to update
         iteration: Current iteration number
@@ -89,8 +89,7 @@ def process_iteration(
     if not HDBSCAN_AVAILABLE:
         raise ImportError("hdbscan not installed. Run: uv sync --extra analysis")
 
-    vector_db = session.vector_db
-    visible_ids = session.get_visible_ids()
+    visible_ids = pool.get_visible_ids()
 
     # 1. Gather candidates: unassigned messages + noise still in active pool
     unassigned = assignments.get_unassigned(visible_ids)
@@ -110,9 +109,9 @@ def process_iteration(
     candidate_embeddings = {}
     candidate_metadata = {}
     for vid in candidates:
-        meta = vector_db.get_message(vid)
+        meta = pool.get_message(vid)
         if meta:
-            candidate_embeddings[vid] = vector_db.embeddings[vid]
+            candidate_embeddings[vid] = pool.get_embedding(vid)
             candidate_metadata[vid] = meta
 
     # 2. Phase 1: Match against existing clusters
@@ -130,7 +129,7 @@ def process_iteration(
             update_centroid(best_cluster, embedding, iteration)
 
             # Update representative if this is closer to centroid
-            rep_embedding = vector_db.embeddings[best_cluster.representative_id]
+            rep_embedding = pool.get_embedding(best_cluster.representative_id)
             if cosine_distance(embedding, best_cluster.centroid) < cosine_distance(rep_embedding, best_cluster.centroid):
                 best_cluster.representative_id = vid
                 best_cluster.representative_text = candidate_metadata[vid]['text']
@@ -209,7 +208,7 @@ def process_iteration(
 
 
 def bootstrap_clustering(
-    session,
+    pool,  # ThinkingPool
     registry: ClusterRegistry,
     assignments: AssignmentTable,
     min_cluster_size: int = 3,
@@ -220,14 +219,16 @@ def bootstrap_clustering(
 
     Runs HDBSCAN on all visible messages to establish initial clusters.
 
+    Args:
+        pool: ThinkingPool with thoughts and embeddings
+
     Returns:
         Dict with stats: {clusters, assigned, noise}
     """
     if not HDBSCAN_AVAILABLE:
         raise ImportError("hdbscan not installed. Run: uv sync --extra analysis")
 
-    vector_db = session.vector_db
-    visible_ids = sorted(session.get_visible_ids())
+    visible_ids = sorted(pool.get_visible_ids())
 
     if verbose:
         print(f"Bootstrapping clusters from {len(visible_ids)} messages...")
@@ -241,9 +242,9 @@ def bootstrap_clustering(
     embeddings = []
     metadata = []
     for vid in visible_ids:
-        meta = vector_db.get_message(vid)
+        meta = pool.get_message(vid)
         if meta:
-            embeddings.append(vector_db.embeddings[vid])
+            embeddings.append(pool.get_embedding(vid))
             metadata.append(meta)
 
     embeddings = np.array(embeddings)

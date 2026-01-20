@@ -513,7 +513,7 @@ def cmd_cluster(args) -> int:
 
         members = runner.cluster_mgr.get_cluster_members(
             args.cluster_id,
-            runner._make_clustering_adapter(),
+            runner.session.thinking_pool,
         )
         if not members:
             print(f"No members found for {args.cluster_id}")

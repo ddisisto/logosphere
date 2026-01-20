@@ -36,20 +36,16 @@ logosphere/
 │   │   ├── ops.py             # Shared operations for CLI and TUI
 │   │   ├── events.py          # Event emitter for UI updates
 │   │   └── config.py          # Runtime configuration
-│   ├── logos/
-│   │   ├── clustering/        # Incremental clustering package
-│   │   │   ├── models.py      # ClusterState, AssignmentTable
-│   │   │   ├── algorithm.py   # Process iteration
-│   │   │   └── manager.py     # ClusterManager persistence
-│   │   └── analyze.py         # Legacy sliding window analysis
-│   ├── analysis/              # Standalone analysis tools
-│   ├── exchange/              # Auditor hooks (experimental)
+│   ├── clustering/            # Incremental clustering package
+│   │   ├── models.py          # ClusterState, AssignmentTable
+│   │   ├── algorithm.py       # Process iteration (uses ThinkingPool directly)
+│   │   └── manager.py         # ClusterManager persistence
 │   └── tui/                   # Chat TUI interface
 ├── scripts/
 │   ├── mind.py                # Main CLI (v2)
-│   ├── tui.py                 # TUI entry point
-│   ├── logos.py               # Legacy CLI (v1)
-│   └── extract_session.py     # Session extraction/forking utility
+│   └── tui.py                 # TUI entry point
+├── archive/                   # Preserved code for future reference
+│   └── attractors.py          # Cluster visualization approach
 └── docs/
     ├── system_prompt_v1.5.md  # Current Mind protocol spec
     ├── dialogue-v2-design.md  # Dialogue data model design
@@ -200,7 +196,7 @@ A session is a directory containing:
 - `prompts/` - Raw LLM requests/responses (`{iter:06d}-req.txt`, `{iter:06d}-resp.txt`)
 - `interventions.jsonl` - Audit log of all actions
 
-Sessions are linear (no branching). Fork sessions by copying with `extract_session.py`.
+Sessions are linear (no branching). Fork sessions by copying the session directory.
 
 ### Mind Protocol (v1.5)
 
