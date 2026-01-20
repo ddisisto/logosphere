@@ -20,6 +20,7 @@ from ..mind.events import EventType, IterationCompleteEvent
 from .panels import IterationLog, StatusPanel
 from .panels.iteration_log import IterationSummary
 from .views import DraftBufferView, HistoryView
+from .modals import UserModal
 
 
 # Session tracking file (same as CLI)
@@ -81,7 +82,9 @@ class MindApp(App):
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+c", "quit", "Quit", priority=True, show=False),
         Binding("s", "step_iteration", "Step"),
-        Binding("h", "toggle_view", "Toggle history"),
+        Binding("h", "toggle_view", "History"),
+        Binding("p", "cycle_presence", "Presence"),
+        Binding("u", "cycle_user", "User"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -142,8 +145,11 @@ class MindApp(App):
             # Subscribe to runner events (for UI updates after step)
             self._runner.events.on(EventType.ITERATION_COMPLETE, self._on_iteration_complete)
 
-            # Set presence to "reviewing" on launch
-            ops.set_signal(self._session, presence="reviewing")
+            # Get or create active user and set to "reviewing" on launch
+            active_user_id = self._session.user_registry.last_user_id
+            if not active_user_id:
+                active_user_id = "user"  # Default user
+            ops.set_user_state(self._session, user_id=active_user_id, presence="reviewing")
 
             # Get session status
             status = ops.get_session_status(self._session)
@@ -238,6 +244,57 @@ class MindApp(App):
         self._update_controls()
         view_name = "history" if self._showing_history else "drafts"
         self.notify(f"Switched to {view_name} view")
+
+    def action_cycle_presence(self) -> None:
+        """Cycle presence state for active user."""
+        if self._session is None:
+            self.notify("No session loaded")
+            return
+
+        active_user_id = self._session.user_registry.last_user_id
+        if not active_user_id:
+            self.notify("No active user")
+            return
+
+        user = self._session.user_registry.get(active_user_id)
+        if not user:
+            self.notify("User not found")
+            return
+
+        # Cycle presence
+        state = user.cycle_presence(self._session.iteration)
+        self._session.save()
+
+        # Update status panel
+        self._refresh_status_panel()
+        self.notify(f"{user.name}: {state.presence}")
+
+    def action_cycle_user(self) -> None:
+        """Open user management modal."""
+        if self._session is None:
+            self.notify("No session loaded")
+            return
+
+        def on_modal_dismiss(saved: bool) -> None:
+            """Handle modal dismiss."""
+            if saved:
+                self._refresh_status_panel()
+                self.notify("User settings saved")
+            else:
+                self._refresh_status_panel()  # Refresh anyway in case user switched
+
+        self.push_screen(UserModal(self._session), on_modal_dismiss)
+
+    def _refresh_status_panel(self) -> None:
+        """Refresh the status panel with current data."""
+        if self._session is None:
+            return
+        try:
+            status = ops.get_session_status(self._session)
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            status_panel.update_status(status)
+        except Exception:
+            pass
 
     def action_step_iteration(self) -> None:
         """Run a single iteration in the background."""

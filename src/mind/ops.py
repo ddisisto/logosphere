@@ -8,8 +8,9 @@ separated from presentation concerns.
 from dataclasses import dataclass
 from typing import Optional
 
-from ..core.session_v2 import SessionV2, PresenceState, UserSignal
+from ..core.session_v2 import SessionV2
 from ..core.dialogue_pool import Draft, HistoryEntry
+from ..core.users import User, UserStateEntry, PresenceState, parse_presence_shorthand
 
 
 # ============================================================================
@@ -33,10 +34,11 @@ class AcceptDraftResult:
 
 
 @dataclass
-class SignalUpdateResult:
-    """Result of updating user signal."""
+class UserStateResult:
+    """Result of updating user state."""
     success: bool
-    signal: Optional[UserSignal] = None
+    user: Optional[User] = None
+    state: Optional[UserStateEntry] = None
     error: Optional[str] = None
 
 
@@ -56,9 +58,11 @@ class SessionStatus:
     latest_draft: Optional[Draft] = None
     # Idle state
     history_count: int = 0
-    # Signal state
+    # User state (active user)
+    active_user_id: str = ""
     presence: str = "absent"
     status_text: str = ""
+    users: Optional[list[User]] = None
     signal_state: Optional[dict] = None  # {consecutive_hard, threshold}
 
 
@@ -268,39 +272,78 @@ def mark_drafts_seen(
         return len(marked), marked
 
 
-def set_signal(
+def set_user_state(
     session: SessionV2,
+    user_id: str,
     presence: Optional[str] = None,
     status: Optional[str] = None,
-) -> SignalUpdateResult:
+    name: Optional[str] = None,
+) -> UserStateResult:
     """
-    Update user signal (presence and/or status).
+    Update user state (presence and/or status).
+
+    Creates user if they don't exist.
 
     Args:
         session: The session
+        user_id: User ID to update
         presence: New presence state (absent/reviewing/engaged or a/r/e)
         status: New status text
+        name: Optional name (only used when creating user)
 
     Returns:
-        SignalUpdateResult with the new signal
+        UserStateResult with the updated user and state
     """
     # Parse presence shorthand
-    presence_map = {'a': 'absent', 'r': 'reviewing', 'e': 'engaged'}
-
     parsed_presence: Optional[PresenceState] = None
     if presence:
-        p = presence.lower()
-        parsed = presence_map.get(p, p)
-        if parsed not in ('absent', 'reviewing', 'engaged'):
-            return SignalUpdateResult(
+        parsed_presence = parse_presence_shorthand(presence)
+        if parsed_presence is None:
+            return UserStateResult(
                 success=False,
                 error=f"Invalid presence: {presence}. Valid: absent (a), reviewing (r), engaged (e)"
             )
-        parsed_presence = parsed  # type: ignore
 
-    signal = session.add_user_signal(presence=parsed_presence, status=status)
+    # Get or create user
+    user = session.user_registry.get_or_create(user_id, name or user_id)
+
+    # Add state entry
+    state = user.add_state(
+        iter=session.iteration,
+        presence=parsed_presence,
+        status=status,
+    )
+
+    # Update last user and save
+    session.user_registry.last_user_id = user_id
     session.save()
-    return SignalUpdateResult(success=True, signal=signal)
+
+    return UserStateResult(success=True, user=user, state=state)
+
+
+def create_user(
+    session: SessionV2,
+    user_id: str,
+    name: str = "",
+) -> UserStateResult:
+    """
+    Create a new user.
+
+    Args:
+        session: The session
+        user_id: User ID (must be unique)
+        name: Display name (defaults to user_id)
+
+    Returns:
+        UserStateResult with the new user
+    """
+    try:
+        user = session.user_registry.create(user_id, name or user_id)
+        session.user_registry.last_user_id = user_id
+        session.save()
+        return UserStateResult(success=True, user=user)
+    except ValueError as e:
+        return UserStateResult(success=False, error=str(e))
 
 
 def get_session_status(session: SessionV2) -> SessionStatus:
@@ -313,7 +356,19 @@ def get_session_status(session: SessionV2) -> SessionStatus:
     Returns:
         SessionStatus with current state
     """
-    signal = session.get_latest_signal()
+    # Get users and active user state
+    users = session.user_registry.list_users()
+    active_user_id = session.user_registry.last_user_id
+    presence = "absent"
+    status_text = ""
+
+    if active_user_id:
+        user = session.user_registry.get(active_user_id)
+        if user:
+            latest = user.get_latest_state()
+            if latest:
+                presence = latest.presence
+                status_text = latest.status
 
     status = SessionStatus(
         session_dir=str(session.session_dir),
@@ -322,8 +377,10 @@ def get_session_status(session: SessionV2) -> SessionStatus:
         thoughts_active=session.thinking_pool.active_size(),
         model=session.config.model,
         is_drafting=session.is_drafting,
-        presence=signal.presence,
-        status_text=signal.status,
+        active_user_id=active_user_id,
+        presence=presence,
+        status_text=status_text,
+        users=users,
         signal_state={
             'consecutive_hard': 0,  # Will be set by runner if available
             'threshold': session.config.hard_signal_threshold,

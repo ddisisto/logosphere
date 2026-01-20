@@ -190,6 +190,7 @@ A session is a directory containing:
 - `session.yaml` - Iteration counter and config
 - `thinking/` - Thought embeddings and pool state
 - `dialogue/` - Dialogue pool state (awaiting/drafts/history)
+- `users.yaml` - User registry (multi-user support with per-user state history)
 - `clusters/` - Cluster registry and assignments
 - `prompts/` - Raw LLM requests/responses (`{iter:06d}-req.txt`, `{iter:06d}-resp.txt`)
 - `interventions.jsonl` - Audit log of all actions
@@ -210,6 +211,12 @@ meta:
     thoughts: {chars: 3000, count: 10}
     history: {chars: 4000, count: 20}
     drafts: {chars: 2000, count: 16}
+  users:
+    - id: daniel
+      name: Daniel
+      state:
+        - {age: 2, presence: reviewing, status: "focusing on X", time: "Sat 10:30"}
+        - {age: 50, presence: absent, time: "Sat 09:00"}
   signal_state:
     consecutive_hard: 0
     threshold: 3
@@ -245,9 +252,9 @@ drafts:
 # Re-orientation after long context
 orientation:
   iter: 247
-  signal_state:
-    consecutive_hard: 0
-    threshold: 3
+  user_state:
+    daniel: {presence: reviewing, status: "focusing on X"}
+  signal_state: {consecutive_hard: 0, threshold: 3}
 ```
 
 **Output:**
@@ -386,6 +393,34 @@ Append-only archive of all drafts from completed exchanges. Each line is a JSON 
 ```
 
 Exchange IDs follow the format `exc_{awaiting_iter}_{sequence:03d}` where the sequence handles rare cases of multiple exchanges at the same iteration.
+
+### users.yaml
+
+```yaml
+last_user_id: daniel
+users:
+  - id: daniel
+    name: Daniel
+    show_clock: true
+    state_display_count: 3
+    state:
+      - iter: 245
+        presence: reviewing
+        status: "focusing on X"
+        time: "Sat 10:30"
+      - iter: 200
+        presence: absent
+        time: "Sat 09:00"
+  - id: alice
+    name: Alice
+    show_clock: false
+    state_display_count: 3
+    state:
+      - iter: 100
+        presence: absent
+```
+
+Each user has independent state history (append-only). `state_display_count` controls how many entries are shown to the mind per user. `show_clock` controls whether time is included in state entries.
 
 ---
 

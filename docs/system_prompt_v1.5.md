@@ -34,11 +34,15 @@
 # Current limits shown in meta.limits each iteration.
 #
 # ============================================================================
-# USER SIGNAL
+# USERS
 # ============================================================================
 #
-# The user's attention state and status are provided in meta.user_signal.
-# Each entry has: presence, status, age, time (local day+time).
+# Multiple users may participate. Each user has identity and state history.
+# Shown in meta.users, each with: id, name, state (recent entries).
+#
+# Draft targeting is inferred from presence:
+#   - If any user is engaged/reviewing → drafts address them
+#   - If all users are absent → drafts may be self-directed
 #
 # Presence states:
 #
@@ -64,11 +68,12 @@
 #   - Free text, may carry over across presence changes
 #   - More recent = more relevant
 #
-# Time context:
+# Time context (optional per-user):
 #   - Day + local time (e.g., "Sat 10:30", "Fri 23:45")
 #   - Infer user state: morning freshness, late night, weekend, etc.
+#   - May be omitted if user prefers privacy
 #
-# Latest signal also shown in orientation footer for re-orientation.
+# User states summarized in orientation footer for re-orientation.
 #
 # ============================================================================
 
@@ -189,15 +194,16 @@ meta:
     thoughts: {chars: 3000, count: 10}
     history: {chars: 4000, count: 20}
     drafts: {chars: 2000, count: 16}
-  user_signal:  # last 3 entries, by age
-    - age: 2
-      presence: reviewing
-      status: "focusing on signal channel impl"
-      time: "Sat 10:30"
-    - age: 17
-      presence: absent
-      status: "back in 30"
-      time: "Sat 10:00"
+  users:
+    - id: daniel
+      name: Daniel
+      state:
+        - {age: 2, presence: reviewing, status: "focusing on signal channel impl", time: "Sat 10:30"}
+        - {age: 17, presence: absent, status: "back in 30", time: "Sat 10:00"}
+    - id: alice
+      name: Alice
+      state:
+        - {age: 50, presence: absent}
   signal_state:
     consecutive_hard: 0
     threshold: 3
@@ -242,12 +248,10 @@ drafts:
 # Re-orientation after long context
 orientation:
   iter: 247
-  user_signal:
-    presence: reviewing
-    status: "focusing on signal channel impl"
-  signal_state:
-    consecutive_hard: 0
-    threshold: 3
+  user_state:
+    daniel: {presence: reviewing, status: "focusing on signal channel impl"}
+    alice: {presence: absent}
+  signal_state: {consecutive_hard: 0, threshold: 3}
 
 
 # ============================================================================

@@ -39,17 +39,33 @@ class StatusPanel(Static):
         s = self._status
         lines = []
 
-        # Presence with visual indicator
+        # Users section
         presence_icons = {
             "absent": "[dim]○[/]",
             "reviewing": "[yellow]◐[/]",
             "engaged": "[green]●[/]",
         }
-        icon = presence_icons.get(s.presence, "?")
-        lines.append(f"{icon} [bold]{s.presence}[/]")
-        if s.status_text:
-            lines.append(f"  [dim]{s.status_text}[/]")
-        lines.append("")
+
+        if s.users:
+            lines.append("[bold]Users:[/]")
+            for user in s.users:
+                is_active = user.id == s.active_user_id
+                latest = user.get_latest_state()
+                presence = latest.presence if latest else "absent"
+                icon = presence_icons.get(presence, "?")
+                marker = "▸ " if is_active else "  "
+                name_style = "bold" if is_active else "dim"
+                lines.append(f"{marker}{icon} [{name_style}]{user.name}[/]")
+                if is_active and latest and latest.status:
+                    lines.append(f"    [dim]{latest.status}[/]")
+            lines.append("")
+        else:
+            # Fallback for no users
+            icon = presence_icons.get(s.presence, "?")
+            lines.append(f"{icon} [bold]{s.presence}[/]")
+            if s.status_text:
+                lines.append(f"  [dim]{s.status_text}[/]")
+            lines.append("")
 
         # Signal state
         if s.signal_state:

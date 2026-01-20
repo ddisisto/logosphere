@@ -138,8 +138,8 @@ class MindRunner:
         drafts_for_display = self.session.get_drafts_for_mind()
         history_for_display = self.session.get_history_for_mind()
 
-        # 4. Get user signals (newest first)
-        user_signals = self.session.get_signals_for_mind()
+        # 4. Get users from registry
+        users = self.session.user_registry.list_users()
 
         # 5. Build limits dict for mind context (v1.3)
         cfg = self.session.config
@@ -165,7 +165,7 @@ class MindRunner:
             history_for_display=history_for_display,
             cluster_assignments=cluster_assignments,
             limits=limits,
-            user_signals=user_signals,
+            users=users,
             signal_state=signal_state,
         )
 

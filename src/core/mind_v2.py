@@ -19,7 +19,7 @@ import yaml
 
 from .thinking_pool import Thought
 from .dialogue_pool import DialoguePool, Draft, HistoryEntry, UserMessage
-from .session_v2 import UserSignal
+from .users import User
 
 
 # ============================================================================
@@ -134,7 +134,7 @@ def format_input(
     cluster_assignments: Optional[dict] = None,  # vector_id -> {cluster_id, size}
     user_time: Optional[str] = None,
     limits: Optional[dict] = None,  # {thoughts: {chars, count}, history: {...}, drafts: {...}}
-    user_signals: Optional[list[UserSignal]] = None,  # Recent signals, newest first
+    users: Optional[list[User]] = None,  # Users with state entries
     signal_state: Optional[dict] = None,  # {consecutive_hard, threshold}
 ) -> str:
     """
@@ -150,7 +150,7 @@ def format_input(
         cluster_assignments: Optional cluster info per thought {cluster_id, size}
         user_time: Optional timestamp override
         limits: Optional display limits to show in meta section
-        user_signals: Optional user signals (newest first) for meta and orientation
+        users: Optional list of users with their state entries
         signal_state: Optional signal state {consecutive_hard, threshold} for meta and orientation
 
     Returns:
@@ -172,15 +172,21 @@ def format_input(
     history: {{chars: {limits['history']['chars']}, count: {limits['history']['count']}}}
     drafts: {{chars: {limits['drafts']['chars']}, count: {limits['drafts']['count']}}}'''
 
-    if user_signals:
-        meta_yaml += '\n  user_signal:  # last entries, by age'
-        for sig in user_signals:
-            age = current_iter - sig.iter
-            status_str = f'\n      status: "{sig.status}"' if sig.status else ''
-            meta_yaml += f'''
-    - age: {age}
-      presence: {sig.presence}{status_str}
-      time: "{sig.time}"'''
+    if users:
+        meta_yaml += '\n  users:'
+        for user in users:
+            meta_yaml += f'\n    - id: {user.id}'
+            meta_yaml += f'\n      name: {user.name}'
+            state_entries = user.get_state_for_display(current_iter)
+            if state_entries:
+                meta_yaml += '\n      state:'
+                for age, entry in state_entries:
+                    parts = [f'age: {age}', f'presence: {entry.presence}']
+                    if entry.status:
+                        parts.append(f'status: "{entry.status}"')
+                    if entry.time:
+                        parts.append(f'time: "{entry.time}"')
+                    meta_yaml += '\n        - {' + ', '.join(parts) + '}'
 
     if signal_state:
         meta_yaml += f'''
@@ -240,21 +246,22 @@ drafts:
 drafts:
 ''' + '\n'.join(draft_items)
 
-        # Build orientation footer (v1.5) with latest user signal and signal state
+        # Build orientation footer (v1.5) with user states and signal state
         orientation_yaml = f'''# Re-orientation after long context
 orientation:
   iter: {current_iter}'''
-        if user_signals:
-            latest = user_signals[0]  # newest first
-            status_str = f'\n    status: "{latest.status}"' if latest.status else ''
-            orientation_yaml += f'''
-  user_signal:
-    presence: {latest.presence}{status_str}'''
+        if users:
+            orientation_yaml += '\n  user_state:'
+            for user in users:
+                latest = user.get_latest_state()
+                if latest:
+                    parts = [f'presence: {latest.presence}']
+                    if latest.status:
+                        parts.append(f'status: "{latest.status}"')
+                    orientation_yaml += f'\n    {user.id}: {{' + ', '.join(parts) + '}'
         if signal_state:
             orientation_yaml += f'''
-  signal_state:
-    consecutive_hard: {signal_state['consecutive_hard']}
-    threshold: {signal_state['threshold']}'''
+  signal_state: {{consecutive_hard: {signal_state['consecutive_hard']}, threshold: {signal_state['threshold']}}}'''
 
         return f'{meta_yaml}\n\n{thinking_yaml}\n\n{dialogue_yaml}\n\n{drafts_yaml}\n{orientation_yaml}\n'
 

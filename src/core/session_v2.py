@@ -11,6 +11,7 @@ Session structure:
     │   └── pool.yaml
     ├── dialogue/
     │   └── pool.yaml
+    ├── users.yaml            # User registry (multi-user support)
     ├── clusters/             # Unchanged from v1
     ├── prompts/              # LLM request/response logs (created by runner)
     │   ├── {iter:06d}-req.txt
@@ -22,55 +23,15 @@ from __future__ import annotations
 
 import tempfile
 import shutil
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional
 
 import yaml
 
 from .thinking_pool import ThinkingPool, Thought
 from .dialogue_pool import DialoguePool, Draft, HistoryEntry
 from .intervention_log import InterventionLog
-
-
-# -----------------------------------------------------------------------------
-# User Signal
-# -----------------------------------------------------------------------------
-
-PresenceState = Literal['absent', 'reviewing', 'engaged']
-
-
-@dataclass
-class UserSignal:
-    """A user presence/status signal entry."""
-    iter: int
-    presence: PresenceState
-    status: str
-    time: str  # "Day HH:MM" format
-
-    def to_dict(self) -> dict:
-        return {
-            'iter': self.iter,
-            'presence': self.presence,
-            'status': self.status,
-            'time': self.time,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> UserSignal:
-        return cls(
-            iter=data['iter'],
-            presence=data['presence'],
-            status=data.get('status', ''),
-            time=data.get('time', ''),
-        )
-
-    @staticmethod
-    def format_local_time() -> str:
-        """Format current local time as 'Day HH:MM'."""
-        now = datetime.now()
-        return now.strftime('%a %H:%M')
+from .users import UserRegistry, PresenceState, User, UserStateEntry
 
 
 class SessionConfig:
@@ -180,11 +141,11 @@ class SessionV2:
         # State
         self.iteration: int = 0
         self.config: SessionConfig = SessionConfig()
-        self.user_signal: list[UserSignal] = []  # Append-only history
 
         # Pools (lazy loaded)
         self._thinking_pool: Optional[ThinkingPool] = None
         self._dialogue_pool: Optional[DialoguePool] = None
+        self._user_registry: Optional[UserRegistry] = None
 
         # Intervention log
         self.intervention_log = InterventionLog(self.session_dir / 'interventions.jsonl')
@@ -215,18 +176,18 @@ class SessionV2:
             )
         return self._dialogue_pool
 
+    @property
+    def user_registry(self) -> UserRegistry:
+        """Get user registry (lazy loaded)."""
+        if self._user_registry is None:
+            self._user_registry = UserRegistry(self.session_dir)
+        return self._user_registry
+
     def _init(self) -> None:
         """Initialize new session."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self._thinking_dir.mkdir(exist_ok=True)
         self._dialogue_dir.mkdir(exist_ok=True)
-        # Default user signal: absent with empty status
-        self.user_signal = [UserSignal(
-            iter=0,
-            presence='absent',
-            status='',
-            time=UserSignal.format_local_time(),
-        )]
         self._save()
 
     def _load(self) -> None:
@@ -237,24 +198,12 @@ class SessionV2:
         self.iteration = data.get('iteration', 0)
         if 'config' in data:
             self.config = SessionConfig.from_dict(data['config'])
-        # Load user signal history
-        if 'user_signal' in data:
-            self.user_signal = [UserSignal.from_dict(s) for s in data['user_signal']]
-        else:
-            # Migration: old session without signal, default to absent
-            self.user_signal = [UserSignal(
-                iter=0,
-                presence='absent',
-                status='',
-                time='',
-            )]
 
     def _save(self) -> None:
         """Save session state."""
         data = {
             'iteration': self.iteration,
             'config': self.config.to_dict(),
-            'user_signal': [s.to_dict() for s in self.user_signal],
         }
 
         # Atomic write
@@ -267,12 +216,14 @@ class SessionV2:
         shutil.move(str(temp_path), str(self._session_path))
 
     def save(self) -> None:
-        """Save all session state (config + pools)."""
+        """Save all session state (config + pools + users)."""
         self._save()
         if self._thinking_pool is not None:
             self._thinking_pool.save()
         if self._dialogue_pool is not None:
             self._dialogue_pool.save()
+        if self._user_registry is not None:
+            self._user_registry.save()
 
     # -------------------------------------------------------------------------
     # Thinking pool operations
@@ -366,55 +317,6 @@ class SessionV2:
             max_entries=self.config.history_display_count,
             max_chars=self.config.history_display_chars,
         )
-
-    # -------------------------------------------------------------------------
-    # User Signal
-    # -------------------------------------------------------------------------
-
-    def add_user_signal(
-        self,
-        presence: Optional[PresenceState] = None,
-        status: Optional[str] = None,
-    ) -> UserSignal:
-        """
-        Add a user signal entry (presence and/or status update).
-
-        Args:
-            presence: New presence state (None = keep current)
-            status: New status text (None = keep current)
-
-        Returns:
-            The new signal entry
-        """
-        latest = self.get_latest_signal()
-
-        signal = UserSignal(
-            iter=self.iteration,
-            presence=presence if presence is not None else latest.presence,
-            status=status if status is not None else latest.status,
-            time=UserSignal.format_local_time(),
-        )
-        self.user_signal.append(signal)
-        return signal
-
-    def get_latest_signal(self) -> UserSignal:
-        """Get the most recent user signal."""
-        if self.user_signal:
-            return self.user_signal[-1]
-        # Fallback (shouldn't happen after init)
-        return UserSignal(iter=0, presence='absent', status='', time='')
-
-    def get_signals_for_mind(self, max_count: int = 3) -> list[UserSignal]:
-        """
-        Get recent signals for display to mind.
-
-        Args:
-            max_count: Maximum signals to return (default 3)
-
-        Returns:
-            List of signals, newest first
-        """
-        return list(reversed(self.user_signal[-max_count:]))
 
     # -------------------------------------------------------------------------
     # Clustering compatibility
