@@ -275,8 +275,8 @@ def bootstrap_clustering(
             # Noise
             for i in indices:
                 vid = visible_ids[i]
-                round_num = metadata[i].get('round', 0)
-                assignments.mark_noise(vid, round_num)
+                iter_num = metadata[i].get('iter', 0)
+                assignments.mark_noise(vid, iter_num)
                 stats["noise"] += 1
             continue
 
@@ -291,13 +291,13 @@ def bootstrap_clustering(
         rep_vid = visible_ids[rep_idx]
         rep_text = metadata[rep_idx]['text']
 
-        # Get iteration from earliest message in cluster
-        min_round = min(metadata[i].get('round', 0) for i in indices)
+        # Get iteration from earliest thought in cluster
+        min_iter = min(metadata[i].get('iter', 0) for i in indices)
 
         # Spawn cluster
         cluster = registry.spawn_cluster(
             centroid=centroid,
-            iteration=min_round,
+            iteration=min_iter,
             representative_id=rep_vid,
             representative_text=rep_text,
         )
@@ -305,13 +305,13 @@ def bootstrap_clustering(
         # Assign all members
         for i in indices:
             vid = visible_ids[i]
-            round_num = metadata[i].get('round', 0)
-            assignments.assign(vid, cluster.id, round_num)
+            iter_num = metadata[i].get('iter', 0)
+            assignments.assign(vid, cluster.id, iter_num)
             cluster.member_count += 1
 
-        # Update last_active to most recent message
-        max_round = max(metadata[i].get('round', 0) for i in indices)
-        cluster.last_active = max_round
+        # Update last_active to most recent thought
+        max_iter = max(metadata[i].get('iter', 0) for i in indices)
+        cluster.last_active = max_iter
 
         stats["clusters"] += 1
         stats["assigned"] += len(indices)

@@ -241,7 +241,7 @@ class ClusterManager:
 
             members.append({
                 "vector_id": vid,
-                "iter": meta.get("round", 0),
+                "iter": meta.get("iter", 0),
                 "distance": float(distance),
                 "text": meta.get("text", ""),
             })

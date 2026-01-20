@@ -284,12 +284,12 @@ class ThinkingPool:
     # -------------------------------------------------------------------------
 
     def get_message(self, vector_id: int) -> Optional[dict]:
-        """Get message dict for clustering compatibility."""
+        """Get message dict for clustering."""
         thought = self.get(vector_id)
         if thought:
             return {
                 'text': thought.text,
-                'round': thought.iter,  # Clustering uses 'round'
+                'iter': thought.iter,
                 'vector_id': thought.vector_id,
             }
         return None
