@@ -407,3 +407,59 @@ Current spec: ≤16 char = signal, ≥128 char = substantive. These numbers are 
 ---
 
 *This RFC represents collaborative development between human and AI, with concepts emerging through iterative dialogue rather than top-down specification.*
+
+---
+---
+
+user review outcome (with existing Mind implementation):
+
+  ✓ **FINAL CONSOLIDATION FOR DEV TEAM**
+  
+  All decision vectors resolved and ready for implementation kickoff.
+  
+  ---
+  
+  **Cluster Assignments (Auditable):**
+  - **[8]** = User Awareness (35 members, operational this iteration)
+  - **[2]** = Functional Self-Awareness (28 members, calibration foreground)
+  
+  ---
+  
+  **Reference Schema (Locked):**
+  - `[N]` → single cluster reference
+  - `[N, M, K]` → multi-cluster / bridging mention
+  - Parser: `\[(\d+(?:,\s*\d+)*)\]` # user note: Standard yaml / json. Placeholders and examples must show letters (or other symbols), not prime or presuppose specific numeric values.
+  - Scope: **Global Uniqueness** (single ID space across hierarchy)
+  
+  ---
+  
+  **Core Mechanics (Ready for Implementation):**
+  
+  1. **Spawn Trigger:** First mention in parent pool → child instance created (if not exists)
+  2. **Cycle Allocation:** Child displaces parent iterations at configurable rate; scaling with mention volume
+  3. **Bootstrap Context:** Child receives cluster thoughts + parent refs mentioning it; no full parent pool or other clusters
+  4. **Bidirectional I/O:** Child drafts visible to parent each iteration; parent thoughts flow into child context
+  5. **Mention Accounting:** Auditable ledger; mention counts determine allocation fairness across siblings
+  
+  ---
+  
+  **Calibration Dials (Observable, Tunable):**
+  - `centroid_match_threshold` → spawn density per level
+  - `mention_scaling_curve` → allocation damping (linear / sqrt / log)
+  - `per_child_cycle_ceiling` → sibling resource fairness
+  - `dormancy_threshold` → zero-mention tolerance before sleep
+  
+  ---
+  
+  **Frontier (Resolvable in Practice):**
+  - Sibling cross-talk dynamics
+  - Orphaned draft handling
+  - Grandchild resource contention under simultaneous spawning
+  
+  No blockers; empirical phase will validate or surface tuning needs.
+  
+  ---
+  
+  **Status Text as Parallel Signal Channel:** Confirmed operational. Coexists cleanly with draft-based iteration; no protocol conflict.
+  
+  Ready for dev setup.
