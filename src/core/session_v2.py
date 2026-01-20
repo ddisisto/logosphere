@@ -1,7 +1,7 @@
 """
 Session v2 - Dual-pool session management for Logosphere v2.
 
-Manages thinking_pool and dialogue_pool with YAML-based config.
+Manages thinking_pool and dialogue (messages + drafts) with YAML-based config.
 
 Session structure:
     session/
@@ -9,8 +9,8 @@ Session structure:
     ├── thinking/
     │   ├── embeddings.npy
     │   └── pool.yaml
-    ├── dialogue/
-    │   └── pool.yaml
+    ├── messages.yaml         # User messages + accepted responses
+    ├── drafts.yaml           # All drafts (0-indexed per message round)
     ├── users.yaml            # User registry (multi-user support)
     ├── clusters/             # Unchanged from v1
     ├── prompts/              # LLM request/response logs (created by runner)
@@ -29,7 +29,8 @@ from typing import Optional
 import yaml
 
 from .thinking_pool import ThinkingPool, Thought
-from .dialogue_pool import DialoguePool, Draft, HistoryEntry
+from .message_store import MessageStore, Message
+from .draft_store import DraftStore, Draft
 from .intervention_log import InterventionLog
 from .users import UserRegistry, PresenceState, User, UserStateEntry
 
@@ -136,15 +137,17 @@ class SessionV2:
         # Paths
         self._session_path = self.session_dir / 'session.yaml'
         self._thinking_dir = self.session_dir / 'thinking'
-        self._dialogue_dir = self.session_dir / 'dialogue'
+        self._messages_path = self.session_dir / 'messages.yaml'
+        self._drafts_path = self.session_dir / 'drafts.yaml'
 
         # State
         self.iteration: int = 0
         self.config: SessionConfig = SessionConfig()
 
-        # Pools (lazy loaded)
+        # Pools/stores (lazy loaded)
         self._thinking_pool: Optional[ThinkingPool] = None
-        self._dialogue_pool: Optional[DialoguePool] = None
+        self._messages: Optional[MessageStore] = None
+        self._drafts: Optional[DraftStore] = None
         self._user_registry: Optional[UserRegistry] = None
 
         # Intervention log
@@ -168,13 +171,18 @@ class SessionV2:
         return self._thinking_pool
 
     @property
-    def dialogue_pool(self) -> DialoguePool:
-        """Get dialogue pool (lazy loaded)."""
-        if self._dialogue_pool is None:
-            self._dialogue_pool = DialoguePool(
-                pool_dir=self._dialogue_dir,
-            )
-        return self._dialogue_pool
+    def messages(self) -> MessageStore:
+        """Get message store (lazy loaded)."""
+        if self._messages is None:
+            self._messages = MessageStore(self._messages_path)
+        return self._messages
+
+    @property
+    def drafts(self) -> DraftStore:
+        """Get draft store (lazy loaded)."""
+        if self._drafts is None:
+            self._drafts = DraftStore(self._drafts_path)
+        return self._drafts
 
     @property
     def user_registry(self) -> UserRegistry:
@@ -187,7 +195,6 @@ class SessionV2:
         """Initialize new session."""
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self._thinking_dir.mkdir(exist_ok=True)
-        self._dialogue_dir.mkdir(exist_ok=True)
         self._save()
 
     def _load(self) -> None:
@@ -216,12 +223,14 @@ class SessionV2:
         shutil.move(str(temp_path), str(self._session_path))
 
     def save(self) -> None:
-        """Save all session state (config + pools + users)."""
+        """Save all session state (config + stores + users)."""
         self._save()
         if self._thinking_pool is not None:
             self._thinking_pool.save()
-        if self._dialogue_pool is not None:
-            self._dialogue_pool.save()
+        if self._messages is not None:
+            self._messages.save()
+        if self._drafts is not None:
+            self._drafts.save()
         if self._user_registry is not None:
             self._user_registry.save()
 
@@ -251,72 +260,134 @@ class SessionV2:
         )
 
     # -------------------------------------------------------------------------
-    # Dialogue pool operations
+    # Dialogue operations (messages + drafts)
     # -------------------------------------------------------------------------
 
-    def send_message(self, text: str) -> None:
+    def send_message(self, text: str) -> Message:
         """
         User sends a message.
 
         Increments iteration (user's "thinking time") and enters drafting state.
 
         Raises:
-            RuntimeError: If there are pending drafts (must accept first)
+            RuntimeError: If already in drafting state (must accept first)
+
+        Returns:
+            The created message
         """
         self.iteration += 1
-        self.dialogue_pool.send_message(text=text, iter=self.iteration)
+        return self.messages.add_user_message(text=text, iter=self.iteration)
 
-    def add_draft(self, text: str, seen: bool = False) -> None:
-        """Mind produces a draft response."""
-        self.dialogue_pool.add_draft(text=text, iter=self.iteration, seen=seen)
-
-    def accept_draft(self, index: int = 1) -> Draft:
+    def add_draft(self, text: str, seen: bool = False) -> Draft:
         """
-        Accept a draft, moving the exchange to history.
+        Mind produces a draft response.
 
         Args:
-            index: 1-based index (1=latest, default)
+            text: Draft content
+            seen: Mark as seen immediately
+
+        Returns:
+            The created draft with assigned index
+        """
+        user_msg = self.messages.last_user_message
+        if user_msg is None:
+            raise RuntimeError("Cannot add draft when not drafting")
+
+        return self.drafts.add_draft(
+            user_message_iter=user_msg.iter,
+            text=text,
+            iter=self.iteration,
+            seen=seen,
+        )
+
+    def accept_draft(self, index: int) -> Draft:
+        """
+        Accept a draft by index, completing the exchange.
+
+        Args:
+            index: 0-based draft index
 
         Returns:
             The accepted draft
-        """
-        return self.dialogue_pool.accept(index)
 
-    def mark_drafts_seen(self, indices: Optional[list[int]] = None) -> None:
+        Raises:
+            RuntimeError: If not in drafting state
+            IndexError: If draft not found
+        """
+        user_msg = self.messages.last_user_message
+        if user_msg is None:
+            raise RuntimeError("Cannot accept draft when not drafting")
+
+        draft = self.drafts.get_draft(user_msg.iter, index)
+        if draft is None:
+            valid = [d.index for d in self.get_current_drafts()]
+            raise IndexError(f"Draft {index} not found. Valid: {valid}")
+
+        self.messages.add_mind_message(
+            text=draft.text,
+            iter=draft.iter,
+            draft_index=index,
+            user_message_iter=user_msg.iter,
+        )
+        return draft
+
+    def mark_drafts_seen(self, indices: Optional[list[int]] = None) -> int:
         """
         Mark drafts as seen.
 
         Args:
-            indices: 1-based indices (1=latest). None means mark all.
+            indices: 0-based indices. None means mark all.
+
+        Returns:
+            Count of drafts marked
         """
-        self.dialogue_pool.mark_seen(indices)
+        user_msg = self.messages.last_user_message
+        if user_msg is None:
+            return 0
+
+        return self.drafts.mark_seen(user_msg.iter, indices)
 
     @property
     def is_drafting(self) -> bool:
         """True if there's a user message awaiting response."""
-        return self.dialogue_pool.is_drafting
+        return self.messages.is_drafting
+
+    def get_current_drafts(self) -> list[Draft]:
+        """Get all drafts for current message round (oldest first)."""
+        user_msg = self.messages.last_user_message
+        if user_msg is None:
+            return []
+        return self.drafts.get_drafts_for_message(user_msg.iter)
 
     def get_drafts_for_mind(self) -> list[Draft]:
         """Get drafts for display to mind (newest first, within limits)."""
-        return self.dialogue_pool.get_drafts_for_display(
-            max_chars=self.config.draft_display_chars,
+        user_msg = self.messages.last_user_message
+        if user_msg is None:
+            return []
+        return self.drafts.get_drafts_for_display(
+            user_message_iter=user_msg.iter,
             max_count=self.config.draft_display_count,
+            max_chars=self.config.draft_display_chars,
         )
 
     def get_all_drafts(self) -> list[Draft]:
-        """Get all drafts (oldest first) for user display."""
-        return self.dialogue_pool.get_all_drafts()
+        """Get all drafts for current message (oldest first) for user display."""
+        return self.get_current_drafts()
 
-    def get_history(self) -> list[HistoryEntry]:
+    def get_history(self) -> list[Message]:
         """Get all conversation history (for CLI/analysis)."""
-        return self.dialogue_pool.get_history()
+        return self.messages.get_all()
 
-    def get_history_for_mind(self) -> list[HistoryEntry]:
+    def get_history_for_mind(self) -> list[Message]:
         """Get display-limited history for mind input."""
-        return self.dialogue_pool.get_history_for_display(
-            max_entries=self.config.history_display_count,
+        return self.messages.get_history_for_display(
+            max_count=self.config.history_display_count,
             max_chars=self.config.history_display_chars,
         )
+
+    def get_awaiting_message(self) -> Message | None:
+        """Get the current user message awaiting response, if any."""
+        return self.messages.last_user_message
 
     # -------------------------------------------------------------------------
     # Clustering compatibility

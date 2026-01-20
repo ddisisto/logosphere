@@ -52,7 +52,7 @@ class MindRunner:
     4. Invoke Mind (LLM)
     5. Parse YAML output
     6. Embed new thoughts → thinking_pool
-    7. Add new draft → dialogue_pool (if any)
+    7. Add new draft (if any)
     8. Run incremental clustering on new thoughts
     """
 
@@ -155,13 +155,16 @@ class MindRunner:
             'threshold': cfg.hard_signal_threshold,
         }
 
-        # 7. Format YAML input with dialogue pool (v1.5 format)
+        # 7. Format YAML input (v1.5 format)
+        all_drafts = self.session.get_all_drafts()
         user_input = format_input(
             mind_id=self.config.mind_id,
             current_iter=self.session.iteration,
             thoughts=thoughts,
-            dialogue_pool=self.session.dialogue_pool,
+            is_drafting=self.session.is_drafting,
+            awaiting_message=self.session.get_awaiting_message(),
             drafts_for_display=drafts_for_display,
+            total_drafts=len(all_drafts),
             history_for_display=history_for_display,
             cluster_assignments=cluster_assignments,
             limits=limits,
@@ -231,9 +234,11 @@ class MindRunner:
                     preview = thought_text[:60] + "..." if len(thought_text) > 60 else thought_text
                     print(f"  [thought] {preview}")
 
-        # 6. Process draft → dialogue_pool
+        # 6. Process draft
         draft_added = False
         hard_signal = False
+        current_drafts = self.session.get_current_drafts()
+
         if output.draft:
             self.session.add_draft(output.draft, seen=observe)
             draft_added = True
@@ -245,10 +250,10 @@ class MindRunner:
         else:
             # Hard signal: no draft output when drafting with existing drafts
             # Mind is saying "look at what's there"
-            if self.session.is_drafting and self.session.dialogue_pool.drafts:
+            if self.session.is_drafting and current_drafts:
                 hard_signal = True
                 if self.config.verbose:
-                    print(f"  [SIGNAL] hard stop - {len(self.session.dialogue_pool.drafts)} drafts ready")
+                    print(f"  [SIGNAL] hard stop - {len(current_drafts)} drafts ready")
 
         # 7. Run incremental clustering on new thoughts (auto-initializes if needed)
         if new_thought_ids:
@@ -305,7 +310,7 @@ class MindRunner:
                 signal_type="hard",
                 consecutive_hard=consecutive_hard_signals + 1,
                 threshold=self.session.config.hard_signal_threshold,
-                message=f"hard stop - {len(self.session.dialogue_pool.drafts)} drafts ready",
+                message=f"hard stop - {len(current_drafts)} drafts ready",
             ))
 
         return StepResult(

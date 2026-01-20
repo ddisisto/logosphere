@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..core.session_v2 import SessionV2
-from ..core.dialogue_pool import Draft, HistoryEntry
+from ..core.draft_store import Draft
+from ..core.message_store import Message
 from ..core.users import User, UserStateEntry, PresenceState, parse_presence_shorthand
 
 
@@ -67,66 +68,22 @@ class SessionStatus:
 
 
 # ============================================================================
-# Draft resolution
+# History resolution (for CLI display)
 # ============================================================================
 
-def resolve_draft_ref(ref: int, drafts: list[Draft]) -> Optional[Draft]:
+def resolve_history_ref(ref: int, history: list[Message]) -> list[Message]:
     """
-    Resolve a draft reference to a Draft object.
-
-    Args:
-        ref: Either an iteration number (positive) or offset (negative).
-             -1 is latest, -2 is second-latest, etc.
-        drafts: List of drafts (oldest first)
-
-    Returns:
-        The matching Draft or None if not found
-    """
-    if not drafts:
-        return None
-
-    if ref < 0:
-        # Negative offset: -1 is latest, -2 is second-latest
-        idx = len(drafts) + ref
-        if 0 <= idx < len(drafts):
-            return drafts[idx]
-        return None
-    else:
-        # Positive: match by iteration number
-        for draft in drafts:
-            if draft.iter == ref:
-                return draft
-        return None
-
-
-def get_draft_offset(draft: Draft, drafts: list[Draft]) -> int:
-    """
-    Get the negative offset for a draft.
-
-    Returns:
-        Negative offset (-1 for latest, -2 for second-latest, etc.)
-    """
-    idx = drafts.index(draft)
-    return idx - len(drafts)
-
-
-# ============================================================================
-# History resolution
-# ============================================================================
-
-def resolve_history_ref(ref: int, history: list[HistoryEntry]) -> list[HistoryEntry]:
-    """
-    Resolve a history reference to a list of entries.
+    Resolve a history reference to a list of messages.
 
     Args:
         ref: Either an iteration number (positive) or offset (negative).
              Positive: match single entry by iter number
              -1: latest single entry
              -N (N>1): last N entries
-        history: List of history entries (oldest first)
+        history: List of messages (oldest first)
 
     Returns:
-        List of matching entries (may be empty, single, or multiple)
+        List of matching messages (may be empty, single, or multiple)
     """
     if not history:
         return []
@@ -141,17 +98,6 @@ def resolve_history_ref(ref: int, history: list[HistoryEntry]) -> list[HistoryEn
             if entry.iter == ref:
                 return [entry]
         return []
-
-
-def get_history_offset(entry: HistoryEntry, history: list[HistoryEntry]) -> int:
-    """
-    Get the negative offset for a history entry.
-
-    Returns:
-        Negative offset (-1 for latest, -2 for second-latest, etc.)
-    """
-    idx = history.index(entry)
-    return idx - len(history)
 
 
 # ============================================================================
@@ -198,14 +144,14 @@ def send_message(session: SessionV2, text: str) -> SendMessageResult:
 
 def accept_draft(
     session: SessionV2,
-    ref: Optional[int] = None,
+    index: Optional[int] = None,
 ) -> AcceptDraftResult:
     """
-    Accept a draft response.
+    Accept a draft response by index.
 
     Args:
         session: The session
-        ref: Draft reference (iter number or negative offset). None = latest.
+        index: Draft index (0-based). None = latest (highest index).
 
     Returns:
         AcceptDraftResult with the accepted draft
@@ -217,19 +163,20 @@ def accept_draft(
     if not drafts:
         return AcceptDraftResult(success=False, error="No drafts available")
 
-    if ref is None:
-        draft = drafts[-1]
-    else:
-        draft = resolve_draft_ref(ref, drafts)
-        if draft is None:
-            valid_iters = [d.iter for d in drafts]
-            return AcceptDraftResult(
-                success=False,
-                error=f"Draft not found for reference {ref}. Valid: {valid_iters}"
-            )
+    # Determine index to accept
+    if index is None:
+        index = drafts[-1].index  # Latest
+
+    # Validate index exists
+    valid_indices = [d.index for d in drafts]
+    if index not in valid_indices:
+        return AcceptDraftResult(
+            success=False,
+            error=f"Draft {index} not found. Valid: {valid_indices}"
+        )
 
     try:
-        accepted = session.accept_draft(draft.index)
+        accepted = session.accept_draft(index)
         session.save()
         return AcceptDraftResult(success=True, draft=accepted)
     except Exception as e:
@@ -238,38 +185,36 @@ def accept_draft(
 
 def mark_drafts_seen(
     session: SessionV2,
-    refs: Optional[list[int]] = None,
+    indices: Optional[list[int]] = None,
 ) -> tuple[int, list[int]]:
     """
     Mark drafts as seen.
 
     Args:
         session: The session
-        refs: List of draft references (iter or offset). None = mark all.
+        indices: List of draft indices (0-based). None = mark all.
 
     Returns:
-        Tuple of (count marked, list of iters marked)
+        Tuple of (count marked, list of indices marked)
     """
     drafts = session.get_all_drafts()
     if not drafts:
         return 0, []
 
-    if refs is None:
+    if indices is None:
         # Mark all
-        session.mark_drafts_seen(None)
+        count = session.mark_drafts_seen(None)
         session.save()
-        return len(drafts), [d.iter for d in drafts]
+        return count, [d.index for d in drafts]
     else:
-        # Mark specific
-        marked = []
-        for ref in refs:
-            draft = resolve_draft_ref(ref, drafts)
-            if draft:
-                draft.seen = True
-                marked.append(draft.iter)
-        if marked:
-            session.dialogue_pool.save()
-        return len(marked), marked
+        # Mark specific - validate indices first
+        valid_indices = {d.index for d in drafts}
+        to_mark = [i for i in indices if i in valid_indices]
+        if to_mark:
+            count = session.mark_drafts_seen(to_mark)
+            session.save()
+            return count, to_mark
+        return 0, []
 
 
 def set_user_state(
@@ -388,10 +333,11 @@ def get_session_status(session: SessionV2) -> SessionStatus:
     )
 
     if session.is_drafting:
-        awaiting = session.dialogue_pool.awaiting
+        awaiting = session.get_awaiting_message()
         drafts = session.get_all_drafts()
-        status.awaiting_text = awaiting.text
-        status.awaiting_iter = awaiting.iter
+        if awaiting:
+            status.awaiting_text = awaiting.text
+            status.awaiting_iter = awaiting.iter
         status.drafts_count = len(drafts)
         if drafts:
             status.latest_draft = drafts[-1]
