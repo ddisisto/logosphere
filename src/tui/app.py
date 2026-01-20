@@ -20,7 +20,7 @@ from ..mind.events import EventType, IterationCompleteEvent
 from .panels import IterationLog, StatusPanel
 from .panels.iteration_log import IterationSummary
 from .views import DraftBufferView, HistoryView
-from .modals import UserModal, MessageModal
+from .modals import UserModal, MessageModal, PresenceModal
 from .views.draft_buffer_view import is_signal
 
 
@@ -248,28 +248,17 @@ class MindApp(App):
         self.notify(f"Switched to {view_name} view")
 
     def action_cycle_presence(self) -> None:
-        """Cycle presence state for active user."""
+        """Open presence modal to set presence and status."""
         if self._session is None:
             self.notify("No session loaded")
             return
 
-        active_user_id = self._session.user_registry.last_user_id
-        if not active_user_id:
-            self.notify("No active user")
-            return
+        def on_modal_dismiss(saved: bool) -> None:
+            """Handle modal dismiss."""
+            if saved:
+                self._refresh_status_panel()
 
-        user = self._session.user_registry.get(active_user_id)
-        if not user:
-            self.notify("User not found")
-            return
-
-        # Cycle presence
-        state = user.cycle_presence(self._session.iteration)
-        self._session.save()
-
-        # Update status panel
-        self._refresh_status_panel()
-        self.notify(f"{user.name}: {state.presence}")
+        self.push_screen(PresenceModal(self._session), on_modal_dismiss)
 
     def action_cycle_user(self) -> None:
         """Open user management modal."""

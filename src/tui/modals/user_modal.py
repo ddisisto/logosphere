@@ -2,13 +2,12 @@
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, Horizontal, Grid
+from textual.containers import Vertical, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, Switch
-from textual.message import Message
 
 from ...core.session_v2 import SessionV2
-from ...core.users import User, PresenceState, PRESENCE_CYCLE
+from ...core.users import User
 
 
 class UserModal(ModalScreen[bool]):
@@ -16,9 +15,10 @@ class UserModal(ModalScreen[bool]):
     Modal for user management.
 
     - Select/create users
-    - Edit user settings (name, presence, status, show_clock, state_display_count)
+    - Edit user settings (name, show_clock, state_display_count)
     - View state history (read-only)
-    - Pending changes shown until save
+
+    Note: Presence and status are managed via PresenceModal (p key).
     """
 
     BINDINGS = [
@@ -57,10 +57,6 @@ class UserModal(ModalScreen[bool]):
     }
 
     .field-input {
-        width: 1fr;
-    }
-
-    #presence-select {
         width: 1fr;
     }
 
@@ -139,25 +135,6 @@ class UserModal(ModalScreen[bool]):
                     classes="field-input",
                 )
 
-            # Presence selector
-            with Horizontal(classes="field-row"):
-                yield Label("Presence:", classes="field-label")
-                yield Select(
-                    [(p.capitalize(), p) for p in PRESENCE_CYCLE],
-                    id="presence-select",
-                    value=self._get_current_presence(),
-                )
-
-            # Status field
-            with Horizontal(classes="field-row"):
-                yield Label("Status:", classes="field-label")
-                yield Input(
-                    value=self._get_current_status(),
-                    id="status-input",
-                    classes="field-input",
-                    placeholder="optional status text",
-                )
-
             # Show clock toggle
             with Horizontal(classes="field-row"):
                 yield Label("Show clock:", classes="field-label")
@@ -195,22 +172,6 @@ class UserModal(ModalScreen[bool]):
         users = self._session.user_registry.list_users()
         return [(u.name, u.id) for u in users] if users else [("(no users)", "")]
 
-    def _get_current_presence(self) -> str:
-        """Get current user's presence."""
-        if self._current_user:
-            latest = self._current_user.get_latest_state()
-            if latest:
-                return latest.presence
-        return "absent"
-
-    def _get_current_status(self) -> str:
-        """Get current user's status."""
-        if self._current_user:
-            latest = self._current_user.get_latest_state()
-            if latest:
-                return latest.status
-        return ""
-
     def _render_state_history(self) -> str:
         """Render state history for current user."""
         if not self._current_user:
@@ -224,18 +185,8 @@ class UserModal(ModalScreen[bool]):
 
         entries = self._current_user.get_state_for_display(self._session.iteration)
 
-        # Show pending changes at top if any
-        lines = []
-        if self._pending_changes:
-            pending_parts = []
-            if 'presence' in self._pending_changes:
-                pending_parts.append(f"presence: {self._pending_changes['presence']}")
-            if 'status' in self._pending_changes:
-                pending_parts.append(f"status: \"{self._pending_changes['status']}\"")
-            if pending_parts:
-                lines.append(f"[yellow]→ pending: {{{', '.join(pending_parts)}}}[/]")
-
         # Show history entries (limited by count)
+        lines = []
         for i, (age, entry) in enumerate(entries[:count]):
             parts = [f"age: {age}", f"presence: {entry.presence}"]
             if entry.status:
@@ -244,7 +195,7 @@ class UserModal(ModalScreen[bool]):
                 parts.append(f'time: "{entry.time}"')
             lines.append(f"[dim]{{{', '.join(parts)}}}[/]")
 
-        if not entries and not self._pending_changes:
+        if not entries:
             lines.append("[dim]No state history[/]")
 
         return "\n".join(lines)
@@ -271,13 +222,6 @@ class UserModal(ModalScreen[bool]):
             elif 'name' in self._pending_changes:
                 del self._pending_changes['name']
 
-        elif event.input.id == "status-input":
-            current = self._get_current_status()
-            if event.value != current:
-                self._pending_changes['status'] = event.value
-            elif 'status' in self._pending_changes:
-                del self._pending_changes['status']
-
         elif event.input.id == "display-count-input":
             try:
                 new_count = int(event.value) if event.value else 3
@@ -292,7 +236,6 @@ class UserModal(ModalScreen[bool]):
                 pass
 
         self._update_pending_indicator()
-        self._update_state_history()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle select changes."""
@@ -300,15 +243,6 @@ class UserModal(ModalScreen[bool]):
             # Switch to different user
             if event.value:
                 self._switch_to_user(str(event.value))
-
-        elif event.select.id == "presence-select":
-            current = self._get_current_presence()
-            if event.value != current:
-                self._pending_changes['presence'] = event.value
-            elif 'presence' in self._pending_changes:
-                del self._pending_changes['presence']
-            self._update_pending_indicator()
-            self._update_state_history()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         """Handle switch changes."""
@@ -337,8 +271,6 @@ class UserModal(ModalScreen[bool]):
             return
 
         self.query_one("#name-input", Input).value = self._current_user.name
-        self.query_one("#status-input", Input).value = self._get_current_status()
-        self.query_one("#presence-select", Select).value = self._get_current_presence()
         self.query_one("#show-clock-switch", Switch).value = self._current_user.show_clock
         self.query_one("#display-count-input", Input).value = str(self._current_user.state_display_count)
         self._update_state_history()
@@ -393,14 +325,6 @@ class UserModal(ModalScreen[bool]):
 
         if 'state_display_count' in self._pending_changes:
             self._current_user.state_display_count = self._pending_changes['state_display_count']
-
-        # Add new state entry if presence or status changed
-        if 'presence' in self._pending_changes or 'status' in self._pending_changes:
-            self._current_user.add_state(
-                iter=self._session.iteration,
-                presence=self._pending_changes.get('presence'),
-                status=self._pending_changes.get('status'),
-            )
 
         self._session.save()
         self._pending_changes.clear()

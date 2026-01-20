@@ -121,7 +121,10 @@ class User:
         show_clock: bool = True,
     ) -> UserStateEntry:
         """
-        Add a new state entry.
+        Add or update a state entry.
+
+        If the latest entry has the same iter, it is replaced (only one entry per iter).
+        Otherwise, a new entry is appended.
 
         Args:
             iter: Current iteration
@@ -130,7 +133,7 @@ class User:
             show_clock: Whether to include time
 
         Returns:
-            The new state entry
+            The new/updated state entry
         """
         latest = self.get_latest_state()
 
@@ -140,7 +143,13 @@ class User:
             status=status if status is not None else (latest.status if latest else ''),
             time=format_local_time() if show_clock and self.show_clock else '',
         )
-        self.state.append(entry)
+
+        # Replace if same iter, otherwise append
+        if latest and latest.iter == iter:
+            self.state[-1] = entry
+        else:
+            self.state.append(entry)
+
         return entry
 
     def cycle_presence(self, iter: int) -> UserStateEntry:
