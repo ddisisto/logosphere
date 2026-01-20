@@ -147,11 +147,10 @@ class MindApp(App):
             # Subscribe to runner events (for UI updates after step)
             self._runner.events.on(EventType.ITERATION_COMPLETE, self._on_iteration_complete)
 
-            # Get or create active user and set to "reviewing" on launch
-            active_user_id = self._session.user_registry.last_user_id
-            if not active_user_id:
-                active_user_id = "user"  # Default user
-            ops.set_user_state(self._session, user_id=active_user_id, presence="reviewing")
+            # Ensure default user exists if none set
+            if not self._session.user_registry.last_user_id:
+                self._session.user_registry.get_or_create("user", "user")
+                self._session.save()
 
             # Get session status
             status = ops.get_session_status(self._session)
