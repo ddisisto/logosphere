@@ -29,6 +29,7 @@ logosphere/
 │   │   ├── session_v2.py      # Session management (thinking + messages + drafts)
 │   │   ├── mind_v2.py         # YAML-based LLM invocation (v1.5 protocol)
 │   │   ├── embedding_client.py # OpenRouter embedding API
+│   │   ├── users.py           # User registry and presence state
 │   │   ├── lock.py            # Session locking for TUI/CLI coordination
 │   │   └── intervention_log.py # Append-only audit trail
 │   ├── mind/

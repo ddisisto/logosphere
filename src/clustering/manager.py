@@ -74,10 +74,9 @@ class ClusterManager:
 
         for i, cluster_id in enumerate(cluster_order):
             if cluster_id in clusters_meta:
-                centroid = centroids[i] if i < len(centroids) else np.zeros(1536, dtype=np.float32)
                 self.registry.clusters[cluster_id] = ClusterState.from_meta_dict(
                     clusters_meta[cluster_id],
-                    centroid
+                    centroids[i]  # IndexError on corrupt data is correct behavior
                 )
 
         # Load assignments
@@ -232,7 +231,7 @@ class ClusterManager:
 
         members = []
         for vid in member_vids:
-            meta = pool.get_message(vid)
+            meta = pool.get_thought_dict(vid)
             if not meta:
                 continue
 

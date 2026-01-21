@@ -283,8 +283,8 @@ class ThinkingPool:
     # Clustering interface (compatible with existing clustering code)
     # -------------------------------------------------------------------------
 
-    def get_message(self, vector_id: int) -> Optional[dict]:
-        """Get message dict for clustering."""
+    def get_thought_dict(self, vector_id: int) -> Optional[dict]:
+        """Get thought as dict for clustering."""
         thought = self.get(vector_id)
         if thought:
             return {

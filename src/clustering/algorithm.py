@@ -109,7 +109,7 @@ def process_iteration(
     candidate_embeddings = {}
     candidate_metadata = {}
     for vid in candidates:
-        meta = pool.get_message(vid)
+        meta = pool.get_thought_dict(vid)
         if meta:
             candidate_embeddings[vid] = pool.get_embedding(vid)
             candidate_metadata[vid] = meta
@@ -242,7 +242,7 @@ def bootstrap_clustering(
     embeddings = []
     metadata = []
     for vid in visible_ids:
-        meta = pool.get_message(vid)
+        meta = pool.get_thought_dict(vid)
         if meta:
             embeddings.append(pool.get_embedding(vid))
             metadata.append(meta)
