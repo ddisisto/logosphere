@@ -404,9 +404,9 @@ class MindRunner:
 
         return results
 
-    def step(self) -> StepResult:
-        """Single iteration. Equivalent to run(1)[0]."""
-        return self.run(1)[0]
+    def step(self, observe: bool = True) -> StepResult:
+        """Single iteration. Equivalent to run(1, observe=observe)[0]."""
+        return self.run(1, observe=observe)[0]
 
     def _should_stop(self, result: StepResult, results: list[StepResult], observe: bool) -> bool:
         """

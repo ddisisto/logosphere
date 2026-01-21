@@ -402,7 +402,18 @@ class MindApp(App):
             return
 
         try:
-            self._runner.step()
+            # Check user presence to determine observe mode
+            # Absent users don't "see" drafts, so mark seen=False
+            observe = True
+            active_user_id = self._session.user_registry.last_user_id
+            if active_user_id:
+                user = self._session.user_registry.get(active_user_id)
+                if user:
+                    latest = user.get_latest_state()
+                    if latest and latest.presence == "absent":
+                        observe = False
+
+            self._runner.step(observe=observe)
             # Event handler (_on_iteration_complete) will update UI
         except Exception as e:
             self.call_from_thread(self._handle_step_error, str(e))
