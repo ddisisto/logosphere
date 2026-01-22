@@ -118,6 +118,7 @@ class DraftBufferView(Vertical):
         self._current_iter = current_iter
         self._config = config
         self._list_view: ListView | None = None
+        self._display_chars_used: int = 0
 
     def compose(self):
         """Compose the view."""
@@ -185,8 +186,15 @@ class DraftBufferView(Vertical):
             result.append(draft)
             total_chars += len(draft.text)
 
+        self._display_chars_used = total_chars
+
         # Reverse to get oldest first
         return list(reversed(result))
+
+    @property
+    def display_chars_used(self) -> int:
+        """Return the number of chars currently being displayed."""
+        return self._display_chars_used
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """Handle selection change in the list."""

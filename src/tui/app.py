@@ -27,6 +27,11 @@ from .views.draft_buffer_view import is_signal
 # Session tracking file (same as CLI)
 SESSION_FILE = Path.home() / ".mind_session"
 
+# Display char limits
+MIN_DISPLAY_CHARS = 500
+MAX_DISPLAY_CHARS = 10000
+DISPLAY_CHARS_INCREMENT = 500
+
 
 def get_current_session_dir() -> Path:
     """Get the current session directory."""
@@ -88,6 +93,8 @@ class MindApp(App):
         Binding("h", "toggle_view", "History"),
         Binding("p", "cycle_presence", "Presence"),
         Binding("u", "cycle_user", "User"),
+        Binding("plus", "increase_display_chars", "+", show=False),
+        Binding("minus", "decrease_display_chars", "-", show=False),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -230,9 +237,10 @@ class MindApp(App):
         else:
             parts.append("[dim]IDLE[/]")
 
-        # View indicator
+        # View indicator with char usage
         view = "history" if self._showing_history else "drafts"
-        parts.append(f"view: {view}")
+        used, limit = self._get_view_char_info()
+        parts.append(f"view: {view}, {used}/{limit}")
 
         # Iteration counter
         parts.append(f"iter: {self._session.iteration}")
@@ -246,6 +254,60 @@ class MindApp(App):
         self._update_controls()
         view_name = "history" if self._showing_history else "drafts"
         self.notify(f"Switched to {view_name} view")
+
+    async def action_increase_display_chars(self) -> None:
+        """Increase display char limit for current view."""
+        await self._adjust_display_chars(DISPLAY_CHARS_INCREMENT)
+
+    async def action_decrease_display_chars(self) -> None:
+        """Decrease display char limit for current view."""
+        await self._adjust_display_chars(-DISPLAY_CHARS_INCREMENT)
+
+    async def _adjust_display_chars(self, delta: int) -> None:
+        """Adjust display char limit for current view by delta."""
+        if self._session is None:
+            return
+
+        # Determine config key based on current view
+        if self._showing_history:
+            key = "history_display_chars"
+            current = self._session.config.history_display_chars
+        else:
+            key = "draft_display_chars"
+            current = self._session.config.draft_display_chars
+
+        # Calculate new value with bounds
+        new_value = max(MIN_DISPLAY_CHARS, min(MAX_DISPLAY_CHARS, current + delta))
+
+        if new_value == current:
+            return  # No change
+
+        # Update config
+        setattr(self._session.config, key, new_value)
+        self._session.save()
+
+        # Refresh the current view
+        await self._mount_main_view()
+        self._update_controls()
+
+    def _get_view_char_info(self) -> tuple[int, int]:
+        """Get (used_chars, limit_chars) for the current view."""
+        if self._session is None:
+            return (0, 0)
+
+        try:
+            if self._showing_history:
+                view = self.query_one("#main-content", HistoryView)
+                return (view.display_chars_used, self._session.config.history_display_chars)
+            else:
+                view = self.query_one("#main-content", DraftBufferView)
+                return (view.display_chars_used, self._session.config.draft_display_chars)
+        except Exception:
+            # View might not be mounted yet
+            if self._showing_history:
+                return (0, self._session.config.history_display_chars)
+            else:
+                return (0, self._session.config.draft_display_chars)
 
     def action_cycle_presence(self) -> None:
         """Open presence modal to set presence and status."""

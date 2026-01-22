@@ -42,6 +42,7 @@ class HistoryView(VerticalScroll):
         self._history = history
         self._current_iter = current_iter
         self._config = config
+        self._display_chars_used: int = 0
 
     def on_mount(self) -> None:
         """Render initial state."""
@@ -91,7 +92,14 @@ class HistoryView(VerticalScroll):
             removed = selected.pop(0)
             total_chars -= len(removed.text)
 
+        self._display_chars_used = total_chars
+
         return selected
+
+    @property
+    def display_chars_used(self) -> int:
+        """Return the number of chars currently being displayed."""
+        return self._display_chars_used
 
     def _make_entry_widget(self, msg: Message) -> Static:
         """Create widget for a single history entry."""
