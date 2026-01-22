@@ -231,8 +231,12 @@ class ThinkingPool:
         return list(range(total - self.active_pool_size, total))
 
     def get_visible_ids(self) -> set[int]:
-        """Get all vector IDs (for clustering compatibility)."""
+        """Get all vector IDs (for clustering - tracks full history)."""
         return set(range(len(self.thoughts)))
+
+    def get_active_ids(self) -> set[int]:
+        """Get vector IDs in active pool (FIFO tail)."""
+        return set(self._active_indices())
 
     # -------------------------------------------------------------------------
     # Persistence

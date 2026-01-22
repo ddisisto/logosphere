@@ -106,10 +106,10 @@ class MindRunner:
         # 2. Get cluster assignments and sizes for sampled thoughts
         cluster_assignments = {}
         if self.cluster_mgr.assignments:
-            # Compute active cluster sizes (members currently in visible pool)
-            visible_ids = self.session.thinking_pool.get_visible_ids()
+            # Compute active cluster sizes (members currently in active pool only)
+            active_ids = self.session.thinking_pool.get_active_ids()
             cluster_sizes = {}
-            for vid in visible_ids:
+            for vid in active_ids:
                 entry = self.cluster_mgr.assignments.get(vid)
                 if entry and entry.cluster_id.startswith('cluster_'):
                     cluster_sizes[entry.cluster_id] = cluster_sizes.get(entry.cluster_id, 0) + 1
