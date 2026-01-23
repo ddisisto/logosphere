@@ -1,8 +1,10 @@
 # RFC: Hierarchical Pool Architecture for Logosphere
 
-**Status:** Draft  
-**Author:** Daniel + Claude (collaborative)  
+**Status:** Deferred — passed over in favor of recall-sampling approach
+**Author:** Daniel + Claude (collaborative)
 **Date:** 2026-01-20
+
+> *This RFC proposes depth through parallel instances (displace invocations with specialists). The alternative — depth through historical retrieval (displace thoughts with specialized ones) — was chosen as the simpler path. This approach remains available if a further scaling dimension is needed.*
 
 ---
 

@@ -1,7 +1,18 @@
 # RFC: Recall Sampling
 
 ## Status
-Draft — concept exploration
+Approved — pending implementation
+
+## Decision Context
+
+This RFC was chosen over an alternative approach (hierarchical pool architecture) that would spawn specialized child instances to develop depth in parallel. The key distinction:
+
+- **Alternative:** Depth through parallel instances — displace *invocations* with specialists
+- **This RFC:** Depth through historical retrieval — displace *thoughts* with specialized ones
+
+Recall keeps everything in one pool, one timeline, one set of dynamics. The "specialist" is the accumulated cluster history, not a separate running process. This aligns with a trust model where dynamics surface what matters — no need to guess upfront what deserves investment.
+
+The alternative remains available if a further scaling dimension is needed (true parallel development of multiple concepts). For now, serial attention with good memory is the simpler path.
 
 ## Problem
 
@@ -62,7 +73,7 @@ thinking_pool:
 ```
 
 Key observations the mind can make:
-- Cluster size (2) accounts for active members only
+- Cluster size (2) accounts for active members only *(now implemented)*
 - More samples than size indicates recall from history
 - Age gap between primary and recall shows temporal depth
 - Active clusters get breadth; sparse clusters get depth
@@ -114,4 +125,4 @@ Explicit protective sampling (surfacing endangered clusters independent of prima
 
 ---
 
-*This RFC captures concept and motivation. Implementation details to follow if path is pursued.*
+*Concept and motivation approved. Open questions point toward configuration and session management choices — genuine implementation detail rather than unresolved concepts.*
